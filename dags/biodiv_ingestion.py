@@ -146,12 +146,16 @@ with DAG(
     occurrences_template = f"{FLEX_BASE}/flex_occurrences.json"
     occs_cleaning_template = f"{FLEX_BASE}/flex_cleaning_occs.json"
     spatial_annotation_template = f"{FLEX_BASE}/flex_spatial_annotations.json"
+    range_estimates_template = f"{FLEX_BASE}/flex_range_estimation.json"
+    data_provenance_template = f"{FLEX_BASE}/flex_data_provenance.json"
 
     # Pipeline artifacts path
     taxonomy_validated = f"{run_prefix}/taxonomy/taxonomy_validated.jsonl"
     raw_occurrences = f"{run_prefix}/occurrences/raw"
     cleaned_occurrences = f"{run_prefix}/occurrences/cleaned"
     spatial_annotations = f"{run_prefix}/spatial"
+    range_estimates = f"{run_prefix}/range_estimates"
+    data_provenance = f"{run_prefix}/data_provenance"
 
     # Pipeline input data for processing
     continental_land_shapefile = f"{OUTPUT_BASE}/data/spatial_processing/ne_10m_land/ne_10m_land.shp"
@@ -259,7 +263,7 @@ with DAG(
     mark_occurrences_success = PythonOperator(
         task_id="mark_occurrences_success",
         python_callable=write_gcs_marker,
-        op_kwargs={"gcs_marker_uri": f"{run_prefix}/occurrences/_SUCCESS"},
+        op_kwargs={"gcs_marker_uri": f"{raw_occurrences}/_SUCCESS"},
     )
 
     # 5. Run cleaning occurrences pipeline
@@ -308,7 +312,7 @@ with DAG(
     mark_cleaning_occs_success = PythonOperator(
         task_id="mark_cleaning_occs_success",
         python_callable=write_gcs_marker,
-        op_kwargs={"gcs_marker_uri": f"{run_prefix}/occurrences/cleaned/_SUCCESS"},
+        op_kwargs={"gcs_marker_uri": f"{cleaned_occurrences}/_SUCCESS"},
     )
 
     # 6. Run spatial annotation pipeline
@@ -354,10 +358,109 @@ with DAG(
     mark_spatial_annotation_success = PythonOperator(
         task_id="mark_spatial_annotation_success",
         python_callable=write_gcs_marker,
-        op_kwargs={"gcs_marker_uri": f"{run_prefix}/spatial/_SUCCESS"},
+        op_kwargs={"gcs_marker_uri": f"{spatial_annotations}/_SUCCESS"},
     )
 
+    # 7. Run species range estimation pipeline
+    run_range_estimation = DataflowStartFlexTemplateOperator(
+        task_id="run_range_estimation",
+        project_id=GCP_PROJECT,
+        location=GCP_REGION,
+        body={
+            "launchParameter": {
+                "jobName": "biodiv-range-estimation-{{ ds_nodash }}-{{ ts_nodash | lower }}",
+                "containerSpecGcsPath": range_estimates_template,
+                "parameters": {
+                    "pipeline": "range_estimation",
+                    # Pipeline parameters
+                    "input_glob": f"{cleaned_occurrences}/occ_*.jsonl",
+                    "bq_schema": f"{OUTPUT_BASE}/schemas/bq_range_estimates_schema.json",
+                    "bq_table": f"{GCP_PROJECT}:{BQ_DATASET}.bp_species_range_estimates",
+                    # Required for custom container / Beam worker imports
+                    "sdk_container_image": SDK_CONTAINER_IMAGE,
+                    "experiments": "use_runner_v2",
+                },
+                "environment": {
+                    "tempLocation": DF_TEMP_LOCATION,
+                    "stagingLocation": DF_STAGING_LOCATION,
+                    # For observability later in Dataflow/Debugging
+                    "additionalUserLabels": {
+                        "app": "biodiv",
+                        "dag": "biodiv_ingestion",
+                        "pipeline": "range_estimation",
+                        "window_start": "{{ ds_nodash }}",
+                    },
+
+                },
+            }
+        },
+        wait_until_finished=True,
+    )
+
+    mark_range_estimation_success = PythonOperator(
+        task_id="mark_range_estimation_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{range_estimates}/_SUCCESS"},
+    )
+
+    # 8. Run metadata urls pipeline
+    run_data_provenance = DataflowStartFlexTemplateOperator(
+        task_id="run_data_provenance",
+        project_id=GCP_PROJECT,
+        location=GCP_REGION,
+        body={
+            "launchParameter": {
+                "jobName": "biodiv-run-data-provenance-{{ ds_nodash }}-{{ ts_nodash | lower }}",
+                "containerSpecGcsPath": data_provenance_template,
+                "parameters": {
+                    "pipeline": "data_provenance",
+                    # Pipeline parameters
+                    "host": ELASTIC_HOST,
+                    "user": ELASTIC_USER ,
+                    "password": ELASTIC_PASSWORD,
+                    "index": "data_portal",
+                    "page_size": "10",
+                    "max_pages": "1",
+                    "taxonomy_path": taxonomy_validated,
+                    "output": data_provenance,
+                    "bq_schema": f"{OUTPUT_BASE}/schemas/bq_metadata_url_schema.json",
+                    "bq_table": f"{GCP_PROJECT}:{BQ_DATASET}.bp_provenance_metadata",
+                    # Required for custom container / Beam worker imports
+                    "sdk_container_image": SDK_CONTAINER_IMAGE,
+                    "experiments": "use_runner_v2",
+                },
+                "environment": {
+                    "tempLocation": DF_TEMP_LOCATION,
+                    "stagingLocation": DF_STAGING_LOCATION,
+                    # For observability later in Dataflow/Debugging
+                    "additionalUserLabels": {
+                        "app": "biodiv",
+                        "dag": "biodiv_ingestion",
+                        "pipeline": "data_provenance",
+                        "window_start": "{{ ds_nodash }}",
+                    },
+
+                },
+            }
+        },
+        wait_until_finished=True,
+    )
+
+    mark_data_provenance_success = PythonOperator(
+        task_id="mark_data_provenance_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{data_provenance}/_SUCCESS"},
+    )
+
+# Marking pipeline succeed
+    mark_pipelines_completion_success = PythonOperator(
+        task_id="mark_pipelines_completion_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{run_prefix}/_SUCCESS"},
+    )
+
+
     # Instantiate DAG tasks & dependencies
-    validate >> run_taxonomy >> mark_taxonomy_success >> run_occurrences >> mark_occurrences_success >> run_cleaning_occs >> mark_cleaning_occs_success >> run_spatial_annotation >> mark_spatial_annotation_success
+    validate >> run_taxonomy >> mark_taxonomy_success >> run_occurrences >> mark_occurrences_success >> run_cleaning_occs >> mark_cleaning_occs_success >> run_spatial_annotation >> mark_spatial_annotation_success >> run_range_estimation >> mark_range_estimation_success >> run_data_provenance >> mark_data_provenance_success >> mark_pipelines_completion_success
 
 
