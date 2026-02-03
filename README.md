@@ -11,7 +11,31 @@ It is designed to run in **Cloud Composer 3** (Airflow 2.10.x), but can be teste
 
 ## Prerequisites
 
-### 1. GCP access
+### 1. Set up Airflow for local dev
+
+Define the location of your Airflow home directory:
+```bash
+export AIRFLOW_HOME="$(pwd)/.airflow"
+```
+Check your Airflow settings:
+
+```bash
+airflow info | head
+```
+Check there are no import errors:
+
+```bash
+airflow dags list-import-errors
+```
+Confirm your DAG and tasks are present:
+
+```bash
+airflow dags list | grep biodiv_ingestion
+
+airflow tasks list biodiv_ingestion
+```
+
+### 2. GCP access
 - You must have credentials available via **Application Default Credentials (ADC)**:
 ```bash
   gcloud auth application-default login
@@ -33,13 +57,14 @@ airflow connections get google_cloud_default
 ```
 
 ## Required Airflow Variables
-These must be set in Composer (or locally via CLI) before running the DAG:
+These must be set in Composer (or locally via CLI) before running the DAG.
 
-Start airflow standalone and set variables:
+Check your variables:
 
 ```bash
-airflow standalone
+airflow variables list 
 ```
+Set your variables if not present already:
 
 ```bash
 airflow variables set biodiv_gcp_project "<gcp-project-id>"
