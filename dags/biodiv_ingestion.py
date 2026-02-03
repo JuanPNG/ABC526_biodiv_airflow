@@ -144,9 +144,17 @@ with DAG(
     # Pipeline templates path
     taxonomy_template = f"{FLEX_BASE}/flex_taxonomy.json"
     occurrences_template = f"{FLEX_BASE}/flex_occurrences.json"
+    occs_cleaning_template = f"{FLEX_BASE}/flex_cleaning_occs.json"
 
     # Pipeline artifacts path
     taxonomy_validated = f"{run_prefix}/taxonomy/taxonomy_validated.jsonl"
+    raw_occurrences = f"{run_prefix}/occurrences/raw",
+
+    cleaned_occurrences = f"{run_prefix}/occurrences/cleaned"
+
+    # Pipeline input data for processing
+    continental_land_shapefile = f"{OUTPUT_BASE}/data/spatial_processing/ne_10m_land/ne_10m_land.shp"
+    centroids_shapefile = f"{OUTPUT_BASE}/data/spatial_processing/ne_10m_admin_0_label_points/ne_10m_admin_0_label_points.shp"
 
     # 1. Discover new species
     # TODO: Implement species discovery task
@@ -178,7 +186,7 @@ with DAG(
                     # GCS Output path
                     "output": f"{run_prefix}/taxonomy/taxonomy",
                     # BigQuery Output
-                    "bq_schema": f"gs://{GCS_BUCKET}/biodiv-pipelines-dev/schemas/bq_taxonomy_schema.json",
+                    "bq_schema": f"{OUTPUT_BASE}/schemas/bq_taxonomy_schema.json",
                     "bq_table": f"{GCP_PROJECT}:{BQ_DATASET}.bq_taxonomy_validated",
 
                     # Required for custom container / Beam worker imports
@@ -222,7 +230,7 @@ with DAG(
                     "pipeline": "occurrences",
                     # Pipeline parameters
                     "validated_input": taxonomy_validated,
-                    "output_dir": f"{run_prefix}/occurrences/raw",
+                    "output_dir": raw_occurrences,
                     "limit": "100",
                     # Required for custom container / Beam worker imports
                     "sdk_container_image": SDK_CONTAINER_IMAGE,
@@ -251,7 +259,56 @@ with DAG(
         op_kwargs={"gcs_marker_uri": f"{run_prefix}/occurrences/_SUCCESS"},
     )
 
+    # 4. Run occurrences pipeline
+    run_cleaning_occs = DataflowStartFlexTemplateOperator(
+        task_id="run_cleaning_occs",
+        project_id=GCP_PROJECT,
+        location=GCP_REGION,
+        body={
+            "launchParameter": {
+                "jobName": "biodiv-occs-cleaning-{{ ds_nodash }}-{{ ts_nodash | lower }}",
+                "containerSpecGcsPath": occs_cleaning_template,
+                "parameters": {
+                    "pipeline": "cleaning_occs",
+                    # Pipeline parameters
+                    "input_glob": f"{raw_occurrences}/occ_*.jsonl",
+                    "output_dir": cleaned_occurrences,
+                    "land_shapefile": continental_land_shapefile,
+                    "centroid_shapefile": centroids_shapefile,
+                    "min_uncertainty": "1000",
+                    "max_uncertainty": "5000",
+                    "max_centroid_dist": "1000",
+                    "bq_schema": f"{OUTPUT_BASE}/schemas/bq_gbif_occurrences_schema.json",
+                    "bq_table": f"{GCP_PROJECT}:{BQ_DATASET}.bp_gbif_occurrences",
+                    "shards": "5",
+                    # Required for custom container / Beam worker imports
+                    "sdk_container_image": SDK_CONTAINER_IMAGE,
+                    "experiments": "use_runner_v2",
+                },
+                "environment": {
+                    "tempLocation": DF_TEMP_LOCATION,
+                    "stagingLocation": DF_STAGING_LOCATION,
+                    # For observability later in Dataflow/Debugging
+                    "additionalUserLabels": {
+                        "app": "biodiv",
+                        "dag": "biodiv_ingestion",
+                        "pipeline": "occs_cleaning",
+                        "window_start": "{{ ds_nodash }}",
+                    },
+
+                },
+            }
+        },
+        wait_until_finished=True,
+    )
+
+    mark_cleaning_occs_success = PythonOperator(
+        task_id="mark_cleaning_occs_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{run_prefix}/occurrences/cleaned/_SUCCESS"},
+    )
+
     # Instantiate DAG tasks & dependencies
-    validate >> run_taxonomy >> mark_taxonomy_success >> run_occurrences >> mark_occurrences_success
+    validate >> run_taxonomy >> mark_taxonomy_success >> run_occurrences >> mark_occurrences_success >> run_cleaning_occs >> mark_cleaning_occs_success
 
 
