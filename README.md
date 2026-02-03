@@ -35,6 +35,12 @@ airflow connections get google_cloud_default
 ## Required Airflow Variables
 These must be set in Composer (or locally via CLI) before running the DAG:
 
+Start airflow standalone and set variables:
+
+```bash
+airflow standalone
+```
+
 ```bash
 airflow variables set biodiv_gcp_project "<gcp-project-id>"
 airflow variables set biodiv_bucket "<gcs-bucket>"
