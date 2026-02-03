@@ -56,7 +56,7 @@ BQ_DATASET = Variable.get("biodiv_bq_dataset", default_var="TESTJPNG")
 
 default_args = {
     "owner": "biodiv",
-    "retries": 2,
+    "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
 
@@ -145,16 +145,19 @@ with DAG(
     taxonomy_template = f"{FLEX_BASE}/flex_taxonomy.json"
     occurrences_template = f"{FLEX_BASE}/flex_occurrences.json"
     occs_cleaning_template = f"{FLEX_BASE}/flex_cleaning_occs.json"
+    spatial_annotation_template = f"{FLEX_BASE}/flex_spatial_annotations.json"
 
     # Pipeline artifacts path
     taxonomy_validated = f"{run_prefix}/taxonomy/taxonomy_validated.jsonl"
-    raw_occurrences = f"{run_prefix}/occurrences/raw",
-
+    raw_occurrences = f"{run_prefix}/occurrences/raw"
     cleaned_occurrences = f"{run_prefix}/occurrences/cleaned"
+    spatial_annotations = f"{run_prefix}/spatial"
 
     # Pipeline input data for processing
     continental_land_shapefile = f"{OUTPUT_BASE}/data/spatial_processing/ne_10m_land/ne_10m_land.shp"
     centroids_shapefile = f"{OUTPUT_BASE}/data/spatial_processing/ne_10m_admin_0_label_points/ne_10m_admin_0_label_points.shp"
+    climate_layers = f"{OUTPUT_BASE}/data/climate"
+    ecoregions_vector = f"{OUTPUT_BASE}/data/bioregions/Ecoregions2017.zip"
 
     # 1. Discover new species
     # TODO: Implement species discovery task
@@ -259,7 +262,7 @@ with DAG(
         op_kwargs={"gcs_marker_uri": f"{run_prefix}/occurrences/_SUCCESS"},
     )
 
-    # 4. Run occurrences pipeline
+    # 5. Run cleaning occurrences pipeline
     run_cleaning_occs = DataflowStartFlexTemplateOperator(
         task_id="run_cleaning_occs",
         project_id=GCP_PROJECT,
@@ -308,7 +311,53 @@ with DAG(
         op_kwargs={"gcs_marker_uri": f"{run_prefix}/occurrences/cleaned/_SUCCESS"},
     )
 
+    # 6. Run spatial annotation pipeline
+    run_spatial_annotation = DataflowStartFlexTemplateOperator(
+        task_id="run_spatial_annotation",
+        project_id=GCP_PROJECT,
+        location=GCP_REGION,
+        body={
+            "launchParameter": {
+                "jobName": "biodiv-spatial-annotation-{{ ds_nodash }}-{{ ts_nodash | lower }}",
+                "containerSpecGcsPath": spatial_annotation_template,
+                "parameters": {
+                    "pipeline": "spatial_annotation",
+                    # Pipeline parameters
+                    "input_occs": f"{cleaned_occurrences}/occ_*.jsonl",
+                    "annotated_output": f"{spatial_annotations}/spatial_annotations",
+                    "summary_output": f"{spatial_annotations}/spatial_annotations_summary",
+                    "climate_dir": climate_layers,
+                    "biogeo_vector": ecoregions_vector,
+                    "bq_schema": f"{OUTPUT_BASE}/schemas/bq_spatial_annotation_summ_schema.json",
+                    "bq_summary_table": f"{GCP_PROJECT}:{BQ_DATASET}.bp_spatial_annotations",
+                    # Required for custom container / Beam worker imports
+                    "sdk_container_image": SDK_CONTAINER_IMAGE,
+                    "experiments": "use_runner_v2",
+                },
+                "environment": {
+                    "tempLocation": DF_TEMP_LOCATION,
+                    "stagingLocation": DF_STAGING_LOCATION,
+                    # For observability later in Dataflow/Debugging
+                    "additionalUserLabels": {
+                        "app": "biodiv",
+                        "dag": "biodiv_ingestion",
+                        "pipeline": "spatial_annotation",
+                        "window_start": "{{ ds_nodash }}",
+                    },
+
+                },
+            }
+        },
+        wait_until_finished=True,
+    )
+
+    mark_spatial_annotation_success = PythonOperator(
+        task_id="mark_spatial_annotation_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{run_prefix}/spatial/_SUCCESS"},
+    )
+
     # Instantiate DAG tasks & dependencies
-    validate >> run_taxonomy >> mark_taxonomy_success >> run_occurrences >> mark_occurrences_success >> run_cleaning_occs >> mark_cleaning_occs_success
+    validate >> run_taxonomy >> mark_taxonomy_success >> run_occurrences >> mark_occurrences_success >> run_cleaning_occs >> mark_cleaning_occs_success >> run_spatial_annotation >> mark_spatial_annotation_success
 
 
