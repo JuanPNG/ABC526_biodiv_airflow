@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biodiv-airflow"
+version = "0.1.0"
+description = "Biodiv shared modules for Composer DAGs (config, helpers, Dataflow flex template specs)."
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["biodiv_airflow*"]
+exclude = ["dags*"]
