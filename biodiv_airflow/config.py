@@ -16,6 +16,7 @@ class BiodivConfig:
     df_temp_location: str
     df_staging_location: str
     sdk_container_image: str
+    dataflow_service_account: str
 
     elastic_host: str
     elastic_user: str
@@ -81,6 +82,10 @@ def load_config() -> BiodivConfig:
         default_var=f"{gcp_region}-docker.pkg.dev/{gcp_project}/biodiversity-images/biodiversity-flex:{image_tag}",
     )
 
+    dataflow_service_account = Variable.get(
+        "biodiv_dataflow_worker_sa_email",
+    default_var="")
+
     elastic_host = Variable.get("elasticsearch_host", default_var="local-host")
     elastic_user = Variable.get("elasticsearch_user", default_var="elastic")
     elastic_password = Variable.get("elasticsearch_password", default_var="")
@@ -126,6 +131,7 @@ def load_config() -> BiodivConfig:
         df_temp_location=df_temp_location,
         df_staging_location=df_staging_location,
         sdk_container_image=sdk_container_image,
+        dataflow_service_account=dataflow_service_account,
         elastic_host=elastic_host,
         elastic_user=elastic_user,
         elastic_password=elastic_password,

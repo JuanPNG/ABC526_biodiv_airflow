@@ -12,6 +12,7 @@ def _base_environment(cfg: BiodivConfig, pipeline_label: str) -> dict[str, Any]:
             "pipeline": pipeline_label,
             "window_start": "{{ ds_nodash }}",
         },
+        "serviceAccountEmail": cfg.dataflow_service_account,
     }
 
 
