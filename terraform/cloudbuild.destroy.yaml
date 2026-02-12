@@ -1,0 +1,31 @@
+substitutions:
+  _TF_STATE_BUCKET: ""
+  _TFVARS_URI: "gs://prj-ext-prod-biodiv-data-in-gbdp-terraform/vars/prod.tfvars"
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: "Fetch tfvars"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        gsutil cp "${_TFVARS_URI}" /workspace/terraform/prod.tfvars
+
+  - name: hashicorp/terraform:1.8.5
+    id: "Terraform init"
+    dir: terraform
+    entrypoint: sh
+    args:
+      - -c
+      - |
+        terraform init -backend-config="bucket=${_TF_STATE_BUCKET}"
+
+  - name: hashicorp/terraform:1.8.5
+    id: "Terraform destroy"
+    dir: terraform
+    entrypoint: sh
+    args:
+      - -c
+      - |
+        terraform destroy -auto-approve -var-file="prod.tfvars"

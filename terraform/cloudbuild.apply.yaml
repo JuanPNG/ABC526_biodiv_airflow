@@ -1,0 +1,49 @@
+substitutions:
+  _TF_STATE_BUCKET: ""
+  _TFVARS_URI: "gs://prj-ext-prod-biodiv-data-in-gbdp-terraform/vars/prod.tfvars"
+  _COMPOSER_ENV_BUCKET: ""     # bucket name only (no gs://)
+  _COMPOSER_DAGS_PREFIX: "dags"
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: "Fetch tfvars"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        gsutil cp "${_TFVARS_URI}" /workspace/terraform/prod.tfvars
+
+  - name: hashicorp/terraform:1.8.5
+    id: "Terraform init"
+    dir: terraform
+    entrypoint: sh
+    args:
+      - -c
+      - |
+        terraform init -backend-config="bucket=${_TF_STATE_BUCKET}"
+
+  - name: hashicorp/terraform:1.8.5
+    id: "Terraform apply"
+    dir: terraform
+    entrypoint: sh
+    args:
+      - -c
+      - |
+        terraform apply -auto-approve -var-file="prod.tfvars"
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: "Deploy DAGs (deterministic)"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        # 1) Sync DAG files
+        gsutil -m rsync -r -d ./dags \
+          "gs://${_COMPOSER_ENV_BUCKET}/${_COMPOSER_DAGS_PREFIX}"
+
+        # 2) Sync your helper module package into the dags folder so imports work
+        gsutil -m rsync -r -d ./biodiv_airflow \
+          "gs://${_COMPOSER_ENV_BUCKET}/${_COMPOSER_DAGS_PREFIX}/biodiv_airflow"
