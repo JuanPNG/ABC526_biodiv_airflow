@@ -54,11 +54,11 @@ def load_config() -> BiodivConfig:
     """
     Parse-time config load. Uses Variable.get with default_var.
     """
-    gcp_project = Variable.get("biodiv_gcp_project", default_var="local-project")
-    gcp_region = Variable.get("biodiv_gcp_region", default_var="europe-west2")
-    gcs_bucket = Variable.get("biodiv_bucket", default_var="local-bucket")
+    gcp_project = Variable.get("biodiv_gcp_project", default_var="")
+    gcp_region = Variable.get("biodiv_gcp_region", default_var="")
+    gcs_bucket = Variable.get("biodiv_bucket", default_var="")
 
-    image_tag = Variable.get("biodiv_image_tag", default_var="flex-image-260129-101318")
+    image_tag = Variable.get("biodiv_image_tag", default_var="")
 
     flex_base = Variable.get(
         "biodiv_flex_base",
@@ -84,13 +84,14 @@ def load_config() -> BiodivConfig:
 
     dataflow_service_account = Variable.get(
         "biodiv_dataflow_worker_sa_email",
-    default_var="")
+        default_var=""
+    )
 
-    elastic_host = Variable.get("elasticsearch_host", default_var="local-host")
-    elastic_user = Variable.get("elasticsearch_user", default_var="elastic")
+    elastic_host = Variable.get("elasticsearch_host", default_var="")
+    elastic_user = Variable.get("elasticsearch_user", default_var="")
     elastic_password = Variable.get("elasticsearch_password", default_var="")
 
-    bq_dataset = Variable.get("biodiv_bq_dataset", default_var="TESTJPNG")
+    bq_dataset = Variable.get("biodiv_bq_dataset", default_var="")
 
     # Keep artifacts isolated per DAG run
     run_prefix = (
