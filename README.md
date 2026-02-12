@@ -13,6 +13,10 @@ The primary DAG is: **`biodiv_pipelines_dag`** (file: `dags/biodiv_pipelines_dag
 
 The DAG is designed for **Cloud Composer 3** (Airflow 2.10.x), but can be developed and tested locally.
 
+It uses **Terraform** to create an **ephemeral** Cloud Composer 3 environment with **least-privilege IAM**
+
+The **Composer environment bucket is persistent** (stores `dags/`, `logs/`, `plugins/`, `data/`)
+
 ---
 
 ## Repo layout (best-practice)
@@ -22,6 +26,14 @@ The DAG is designed for **Cloud Composer 3** (Airflow 2.10.x), but can be develo
   - `config.py`: loads Airflow Variables and computes derived paths
   - `helpers.py`: generic helpers (GCS marker writing, config validation)
   - `dataflow_specs.py`: builds Dataflow Flex Template `body` payloads for each pipeline
+- `terrafrom/` is a Terraform module that creates a Composer environment. It includes the following files separating code chunks in different Terraform modules:
+  - `main.tf`: Infrastructure definition.
+  - `provider.tf`: Provider config.
+  - `iam.tf`: IAM policies
+  - `variables.tf`: Input schema.
+  - `versions.tf`: Backend and version pinning
+  - `ouputs.tf`: outputs.
+  - `.terraform.lock.hcl`: Terraform lockfile (pins provider versions/checksums).
 
 Recommended structure:
 
@@ -32,9 +44,18 @@ Recommended structure:
 │ ├── config.py
 │ ├── helpers.py
 │ └── dataflow_specs.py
-└── dags/
-├── biodiv_pipelines_dag.py
-└── biodiv_ingestion.py # legacy
+├── dags/
+│  ├── biodiv_pipelines_dag.py
+│  └── biodiv_ingestion.py # legacy
+└── terraform/
+  ├── main.tf
+  ├── provider.tf
+  ├── iam.tf
+  ├── variables.tf
+  ├── versions.tf
+  ├── outputs.tf
+  └── .terraform.lock.hcl
+
 
 ```
 
@@ -195,3 +216,98 @@ gsutil ls gs://<bucket>/biodiv-pipelines-dev/runs/window_start=2026-01-29/run_ts
 ## NOTES
 * The DAG is currently manual trigger only (schedule=None).
 * _SUCCESS markers are used as lightweight completion artifacts for debugging and future orchestration.
+
+---
+## Deployment with Terraform
+
+### 1) Create a local tfvars file (do not commit)
+
+Create `prod.tfvars` (or equivalent) locally:
+
+```hcl
+project_idc = <gcp-project-id>
+
+# Pipeline data bucket (temp/staging/output)
+gcs_bucket_name = <gcs-bucket>
+
+# Persistent Composer env bucket (dags/logs/plugins/data)
+composer_env_bucket_name = <your-bucket-composer-storage>
+
+# BigQuery datasets Dataflow writes to
+bq_datasets = [
+  <your-bq-dataset>
+]
+
+# Artifact Registry repos that store your Flex images
+artifact_registry_repo_names = [
+  <your-ar-repo>
+]
+```
+
+### 2) Init / plan / apply
+
+```bash
+export TF_STATE_BUCKET="<your-bucket-tf-state>"
+
+terraform init -backend-config="bucket=${TF_STATE_BUCKET}"
+terraform plan  -var-file="prod.tfvars"
+terraform apply -var-file="prod.tfvars"
+```
+
+### 3) Destroy (ephemeral environment)
+
+```bash
+terraform destroy -var-file="prod.tfvars"
+```
+
+**Note:** the Composer environment bucket is intended to be **persistent** and should not be managed/destroyed by this Terraform stack.
+
+## DAG deployment (Git → Composer bucket)
+
+The Composer environment loads DAGs from the environment bucket under `dags/`.
+Save your DAGS and dependencies to your storage bucket:
+
+```bash
+gsutil -m rsync -r -d ./dags   gs://<your-bucket-composer-storage>/dags
+```
+
+- `-d` ensures the bucket is an exact mirror of the repo `./dags` folder (no drift)
+- Avoid editing DAGs directly in GCS; always change code in Git and re-sync
+
+---
+
+## Airflow variables required
+
+Set the following Airflow Variable in Composer (Airflow UI → Admin → Variables):
+
+- `biodiv_dataflow_worker_sa_email` = `dataflow-biodiv-worker@<gcp-project-id>.iam.gserviceaccount.com`
+
+This is required to ensure Dataflow jobs run as the dedicated worker service account (org policy blocks the Compute default service account).
+
+---
+
+## Running the DAG (Composer)
+
+1. Ensure Composer environment is **RUNNING**
+2. Deploy DAGs to the Composer bucket (see above)
+3. In Airflow UI:
+   - Unpause the DAG
+   - Trigger a manual run
+4. Monitor:
+   - Airflow task logs
+   - Dataflow job logs
+   - GCS outputs under your configured `temp/`, `staging/`, `out/`
+   - BigQuery tables / rows in the target datasets
+
+---
+
+## What not to commit
+
+Add these to `.gitignore` (or confirm they are already ignored):
+
+- `terraform.tfstate`, `terraform.tfstate.backup`, `*.tfstate.*`
+- `.terraform/`
+- `*.tfvars`, `*.tfvars.json` (commit only `*.tfvars.example` if needed)
+- Any service account key JSON files (do not use SA keys for Composer/Dataflow)
+
+Committing `.terraform.lock.hcl` **is recommended** (pins provider versions/checksums).
