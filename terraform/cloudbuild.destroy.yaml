@@ -2,30 +2,53 @@ substitutions:
   _TF_STATE_BUCKET: ""
   _TFVARS_URI: "gs://prj-ext-prod-biodiv-data-in-gbdp-terraform/vars/prod.tfvars"
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: "Fetch tfvars"
+    id: "Preflight checks + Fetch tfvars"
     entrypoint: bash
     args:
       - -c
       - |
         set -euo pipefail
-        gsutil cp "${_TFVARS_URI}" /workspace/terraform/prod.tfvars
+
+        if [[ -z "${_TF_STATE_BUCKET}" ]]; then
+          echo "ERROR: _TF_STATE_BUCKET is empty. Provide the TF state bucket name."
+          exit 1
+        fi
+        if [[ -z "${_TFVARS_URI}" ]]; then
+          echo "ERROR: _TFVARS_URI is empty. Provide the gs:// URI to prod.tfvars."
+          exit 1
+        fi
+
+        mkdir -p /workspace/terraform/ephemeral
+        gsutil cp "${_TFVARS_URI}" /workspace/terraform/ephemeral/prod.tfvars
+
+        echo "Fetched tfvars to /workspace/terraform/ephemeral/prod.tfvars"
+        echo "Using state bucket: ${_TF_STATE_BUCKET}"
 
   - name: hashicorp/terraform:1.8.5
-    id: "Terraform init"
-    dir: terraform
+    id: "Terraform init (ephemeral)"
+    dir: terraform/ephemeral
     entrypoint: sh
+    env:
+      - TF_IN_AUTOMATION=1
     args:
       - -c
       - |
+        set -euo pipefail
         terraform init -backend-config="bucket=${_TF_STATE_BUCKET}"
 
   - name: hashicorp/terraform:1.8.5
-    id: "Terraform destroy"
-    dir: terraform
+    id: "Terraform destroy (ephemeral)"
+    dir: terraform/ephemeral
     entrypoint: sh
+    env:
+      - TF_IN_AUTOMATION=1
     args:
       - -c
       - |
-        terraform destroy -auto-approve -var-file="prod.tfvars"
+        set -euo pipefail
+        terraform destroy -auto-approve -input=false -var-file="prod.tfvars"

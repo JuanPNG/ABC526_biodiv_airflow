@@ -4,33 +4,63 @@ substitutions:
   _COMPOSER_ENV_BUCKET: ""     # bucket name only (no gs://)
   _COMPOSER_DAGS_PREFIX: "dags"
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: "Fetch tfvars"
+    id: "Preflight checks + Fetch tfvars"
     entrypoint: bash
     args:
       - -c
       - |
         set -euo pipefail
-        gsutil cp "${_TFVARS_URI}" /workspace/terraform/prod.tfvars
+
+        # Fail fast if required substitutions are missing
+        if [[ -z "${_TF_STATE_BUCKET}" ]]; then
+          echo "ERROR: _TF_STATE_BUCKET is empty. Provide the TF state bucket name."
+          exit 1
+        fi
+        if [[ -z "${_COMPOSER_ENV_BUCKET}" ]]; then
+          echo "ERROR: _COMPOSER_ENV_BUCKET is empty. Provide the Composer environment bucket name (no gs://)."
+          exit 1
+        fi
+        if [[ -z "${_TFVARS_URI}" ]]; then
+          echo "ERROR: _TFVARS_URI is empty. Provide the gs:// URI to prod.tfvars."
+          exit 1
+        fi
+
+        # Ensure folder exists, then fetch tfvars into the module directory
+        mkdir -p /workspace/terraform/ephemeral
+        gsutil cp "${_TFVARS_URI}" /workspace/terraform/ephemeral/prod.tfvars
+
+        echo "Fetched tfvars to /workspace/terraform/ephemeral/prod.tfvars"
+        echo "Using state bucket: ${_TF_STATE_BUCKET}"
+        echo "Deploying DAGs to: gs://${_COMPOSER_ENV_BUCKET}/${_COMPOSER_DAGS_PREFIX}"
 
   - name: hashicorp/terraform:1.8.5
-    id: "Terraform init"
-    dir: terraform
+    id: "Terraform init (ephemeral)"
+    dir: terraform/ephemeral
     entrypoint: sh
+    env:
+      - TF_IN_AUTOMATION=1
     args:
       - -c
       - |
+        set -euo pipefail
         terraform init -backend-config="bucket=${_TF_STATE_BUCKET}"
 
   - name: hashicorp/terraform:1.8.5
-    id: "Terraform apply"
-    dir: terraform
+    id: "Terraform apply (ephemeral)"
+    dir: terraform/ephemeral
     entrypoint: sh
+    env:
+      - TF_IN_AUTOMATION=1
     args:
       - -c
       - |
-        terraform apply -auto-approve -var-file="prod.tfvars"
+        set -euo pipefail
+        terraform apply -auto-approve -input=false -var-file="prod.tfvars"
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     id: "Deploy DAGs (deterministic)"
