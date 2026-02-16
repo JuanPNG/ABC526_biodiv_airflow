@@ -25,6 +25,15 @@ resource "google_composer_environment" "env" {
 
     software_config {
       image_version = var.image_version
+
+      env_variables = merge(
+        {
+          AIRFLOW_VAR_BIODIV_GCP_PROJECT = var.project_id
+          AIRFLOW_VAR_BIODIV_GCP_REGION  = var.region
+          AIRFLOW_VAR_BIODIV_BUCKET      = var.gcs_bucket_name
+        },
+        var.airflow_env_vars
+       )
     }
 
     node_config {

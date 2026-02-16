@@ -104,3 +104,13 @@ variable "enable_secret_manager" {
   description = "Grant Secret Manager access to Composer/Dataflow service accounts."
   default     = false
 }
+
+# --------------------------------------------------------------------
+# Airflow vars
+# --------------------------------------------------------------------
+
+variable "airflow_env_vars" {
+  description = "Non-sensitive env vars to inject into Airflow. Use AIRFLOW_VAR_* to back Airflow Variables."
+  type        = map(string)
+  default     = {}
+}
