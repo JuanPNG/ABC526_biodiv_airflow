@@ -39,7 +39,6 @@ resource "google_composer_environment" "env" {
 
         "secrets-backend-kwargs" = jsonencode({
           variables_prefix   = "gbdp"
-          connections_prefix = "airflow-connections"
           sep                = "_"
         })
       }
