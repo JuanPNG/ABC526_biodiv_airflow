@@ -140,4 +140,28 @@ resource "google_project_iam_member" "dataflow_worker_role" {
   member  = "serviceAccount:${local.dataflow_sa}"
 }
 
+# Cloud build account and permissions to use Cloud Composer
+resource "google_service_account" "cloudbuild_lifecycle_sa" {
+  provider     = google-beta
+  project      = var.project_id
+  account_id   = var.cloudbuild_sa_account_id
+  display_name = "Cloud Build SA for Biodiv Composer lifecycle"
+}
+
+# Permissions to add logs
+resource "google_project_iam_member" "cloudbuild_logs_writer" {
+  provider = google-beta
+  project  = var.project_id
+  role     = "roles/logging.logWriter"
+  member   = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
+}
+
+# Permission to actAs composer runtime SA
+resource "google_service_account_iam_member" "cloudbuild_can_act_as_composer_runtime_sa" {
+  provider           = google-beta
+  service_account_id = google_service_account.composer_env_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
+}
+
 

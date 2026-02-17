@@ -89,3 +89,13 @@ variable "enable_secret_manager" {
   description = "Grant Secret Manager access to Composer/Dataflow service accounts."
   default     = false
 }
+
+# --------------------------------------------------------------------
+# Cloud Build
+# -------------------------------------------------------------------
+
+variable "cloudbuild_sa_account_id" {
+  description = "Account ID (not email) of the Cloud Build execution service account"
+  type        = string
+  default     = "cb-biodiv-composer-lifecycle"
+}
