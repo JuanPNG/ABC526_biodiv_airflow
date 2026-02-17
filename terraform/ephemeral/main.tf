@@ -15,7 +15,6 @@ resource "google_composer_environment" "env" {
   region   = var.region
   project  = var.project_id
 
-  # Persist DAGs across recreate (your current approach)
   storage_config {
     bucket = "gs://${var.composer_env_bucket_name}"
   }
@@ -33,7 +32,17 @@ resource "google_composer_environment" "env" {
           AIRFLOW_VAR_BIODIV_BUCKET      = var.gcs_bucket_name
         },
         var.airflow_env_vars
-       )
+      )
+
+      airflow_config_overrides = {
+        "secrets-backend" = "airflow.providers.google.cloud.secrets.secret_manager.CloudSecretManagerBackend"
+
+        "secrets-backend-kwargs" = jsonencode({
+          variables_prefix   = "gbdp"
+          connections_prefix = "airflow-connections"
+          sep                = "-"
+        })
+      }
     }
 
     node_config {
