@@ -99,3 +99,12 @@ variable "cloudbuild_sa_account_id" {
   type        = string
   default     = "cb-biodiv-composer-lifecycle"
 }
+
+# --------------------------------------------------------------------
+# Workflows
+# -------------------------------------------------------------------
+variable "workflows_sa_name" {
+  description = "Account ID (not email) for the Workflows execution service account."
+  type        = string
+  default     = "wf-biodiv-composer-lifecycle"
+}
