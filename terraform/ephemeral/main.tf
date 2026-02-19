@@ -37,12 +37,13 @@ resource "google_composer_environment" "env" {
       airflow_config_overrides = {
         "secrets-backend" = "airflow.providers.google.cloud.secrets.secret_manager.CloudSecretManagerBackend"
 
-        "secrets-backend-kwargs" = jsonencode({
-          variables_prefix   = "gbdp"
-          sep                = "_"
-        })
-      }
-    }
+        "secrets-backend_kwargs" = jsonencode({
+            project_id         = var.project_id
+              variables_prefix   = "gbdp"
+              sep                = "_"
+            })
+          }
+        }
 
     node_config {
       service_account = local.composer_env_sa_email
