@@ -66,7 +66,6 @@ resource "google_artifact_registry_repository_iam_member" "composer_ar_reader" {
 
 # Optional: read secrets (preferred over storing secrets as Airflow Variables).
 resource "google_project_iam_member" "composer_secret_accessor" {
-  count   = var.enable_secret_manager ? 1 : 0
   project = var.project_id
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${local.composer_sa}"
@@ -164,4 +163,28 @@ resource "google_service_account_iam_member" "cloudbuild_can_act_as_composer_run
   member             = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
 }
 
+# Wrokflows account
+resource "google_service_account" "workflows_lifecycle_sa" {
+  project      = var.project_id
+  account_id   = var.workflows_sa_name
+  display_name = "Workflows SA for Biodiv Composer lifecycle"
+}
+
+resource "google_project_iam_member" "workflows_cloudbuild_builds_editor" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
+}
+
+resource "google_project_iam_member" "workflows_composer_user" {
+  project = var.project_id
+  role    = "roles/composer.user"
+  member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
+}
+
+resource "google_project_iam_member" "workflows_invoker" {
+  project = var.project_id
+  role    = "roles/workflows.invoker"
+  member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
+}
 
