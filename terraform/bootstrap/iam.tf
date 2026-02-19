@@ -118,7 +118,6 @@ resource "google_artifact_registry_repository_iam_member" "dataflow_ar_reader" {
 }
 
 resource "google_project_iam_member" "dataflow_secret_accessor" {
-  count   = var.enable_secret_manager ? 1 : 0
   project = var.project_id
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${local.dataflow_sa}"

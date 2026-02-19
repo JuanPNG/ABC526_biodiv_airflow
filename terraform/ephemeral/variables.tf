@@ -96,16 +96,6 @@ variable "artifact_registry_location" {
 }
 
 # --------------------------------------------------------------------
-# Optional services
-# --------------------------------------------------------------------
-
-variable "enable_secret_manager" {
-  type        = bool
-  description = "Grant Secret Manager access to Composer/Dataflow service accounts."
-  default     = false
-}
-
-# --------------------------------------------------------------------
 # Airflow vars
 # --------------------------------------------------------------------
 
