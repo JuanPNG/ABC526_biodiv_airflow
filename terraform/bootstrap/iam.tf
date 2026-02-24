@@ -170,6 +170,14 @@ resource "google_service_account_iam_member" "cloudbuild_can_act_as_composer_run
   member             = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
 }
 
+# Permission for cloudbuild to use the composer env
+resource "google_storage_bucket_iam_member" "cb_composer_bucket_object_admin" {
+  bucket = var.composer_env_bucket_name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
+}
+
+
 # Wrokflows account
 resource "google_service_account" "workflows_lifecycle_sa" {
   project      = var.project_id
@@ -189,15 +197,22 @@ resource "google_project_iam_member" "workflows_composer_user" {
   member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
 }
 
-# resource "google_project_iam_member" "workflows_invoker" {
-#   project = var.project_id
-#   role    = "roles/workflows.invoker"
-#   member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
-# }
-
 # Allow the Workflows SA to mint access tokens for itself (IAM Credentials generateAccessToken)
 resource "google_service_account_iam_member" "workflows_sa_token_creator_self" {
   service_account_id = google_service_account.workflows_lifecycle_sa.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
+}
+
+# Permissions to allow cloudbuild to access terraform buckets
+resource "google_storage_bucket_iam_member" "cb_tf_state_object_admin" {
+  bucket = var.terraform_state_bucket
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
+}
+
+resource "google_storage_bucket_iam_member" "cb_tfvars_object_viewer" {
+  bucket = var.terraform_vars_bucket
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.cloudbuild_lifecycle_sa.email}"
 }
