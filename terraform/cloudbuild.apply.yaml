@@ -1,7 +1,20 @@
+# Applies the Terraform ephemeral stack (terraform/ephemeral) to create/update the Composer environment,
+# then deploys DAGs + helper package to the Composer environment bucket deterministically.
+#
+# Required substitutions:
+#   _TF_STATE_BUCKET: GCS bucket NAME for Terraform backend (no gs://)
+#   _TFVARS_URI:      gs:// URI to the tfvars file (e.g. gs://.../prod.tfvars)
+#   _COMPOSER_ENV_BUCKET: Composer env bucket NAME only (no gs://)
+#   _COMPOSER_DAGS_PREFIX: Prefix within the Composer bucket for DAGs (default: dags)
+#
+# Notes:
+# - DAG deployment uses `gsutil rsync -d` (deletes removed files) for reproducibility.
+# - Terraform is executed from terraform/ephemeral with a local var-file copied into /workspace.
+
 substitutions:
   _TF_STATE_BUCKET: ""
   _TFVARS_URI: "gs://prj-ext-prod-biodiv-data-in-gbdp-terraform/vars/prod.tfvars"
-  _COMPOSER_ENV_BUCKET: ""     # bucket name only (no gs://)
+  _COMPOSER_ENV_BUCKET: ""
   _COMPOSER_DAGS_PREFIX: "dags"
 
 options:

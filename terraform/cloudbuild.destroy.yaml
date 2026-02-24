@@ -1,3 +1,13 @@
+# Destroys the Terraform ephemeral stack (terraform/ephemeral) to delete the Composer environment.
+#
+# Required substitutions:
+#   _TF_STATE_BUCKET: GCS bucket NAME for Terraform backend (no gs://)
+#   _TFVARS_URI:      gs:// URI to the tfvars file (e.g. gs://.../prod.tfvars)
+#
+# Notes:
+# - This does not delete DAG artifacts in the Composer bucket; it only destroys the environment.
+# - Terraform is executed from terraform/ephemeral with a local var-file copied into /workspace.
+
 substitutions:
   _TF_STATE_BUCKET: ""
   _TFVARS_URI: "gs://prj-ext-prod-biodiv-data-in-gbdp-terraform/vars/prod.tfvars"
