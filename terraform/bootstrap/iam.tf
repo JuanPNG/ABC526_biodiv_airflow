@@ -10,7 +10,7 @@
  * - Dataflow worker SA: data plane (reads/writes GCS, writes BigQuery, pulls images).
  */
 
-# Dedicated Dataflow worker service account (recommended).
+# Dedicated Dataflow worker service account.
 resource "google_service_account" "dataflow_worker_sa" {
   account_id   = var.dataflow_worker_sa_account_id
   display_name = "Dataflow worker SA for ${var.env_name}"
@@ -24,6 +24,14 @@ locals {
 # -----------------------------
 # Composer SA (control plane)
 # -----------------------------
+
+# Minimum IAM required for Composer SA
+resource "google_project_iam_member" "composer_worker_role" {
+  provider = google-beta
+  project  = var.project_id
+  role     = "roles/composer.worker"
+  member   = "serviceAccount:${google_service_account.composer_env_sa.email}"
+}
 
 # Submit Flex Template jobs.
 resource "google_project_iam_member" "composer_dataflow_developer" {
@@ -181,9 +189,15 @@ resource "google_project_iam_member" "workflows_composer_user" {
   member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
 }
 
-resource "google_project_iam_member" "workflows_invoker" {
-  project = var.project_id
-  role    = "roles/workflows.invoker"
-  member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
-}
+# resource "google_project_iam_member" "workflows_invoker" {
+#   project = var.project_id
+#   role    = "roles/workflows.invoker"
+#   member  = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
+# }
 
+# Allow the Workflows SA to mint access tokens for itself (IAM Credentials generateAccessToken)
+resource "google_service_account_iam_member" "workflows_sa_token_creator_self" {
+  service_account_id = google_service_account.workflows_lifecycle_sa.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.workflows_lifecycle_sa.email}"
+}
