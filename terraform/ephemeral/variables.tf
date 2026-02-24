@@ -1,7 +1,6 @@
-/**
- * Global / environment-level configuration
- * Best practice: keep environment-specific identifiers OUT of defaults.
- */
+#--------------------------------------------------------------------
+# Global / environment-level configuration
+#--------------------------------------------------------------------
 
 variable "project_id" {
   type        = string
@@ -11,31 +10,26 @@ variable "project_id" {
 variable "region" {
   type        = string
   description = "GCP region for the Composer environment."
-  default     = "europe-west2"
 }
 
 variable "env_name" {
   type        = string
   description = "Fixed name of the Cloud Composer environment."
-  default     = "biodiversity-pipelines-composer-env"
 }
 
 variable "image_version" {
   type        = string
   description = "Pinned Cloud Composer 3 image version (avoid using 'latest')."
-  default     = "composer-3-airflow-2.10.5-build.25"
 }
 
 variable "composer_env_sa_account_id" {
   type        = string
   description = "Service account ID used by the Composer environment workloads (scheduler, workers, webserver)."
-  default     = "composer-biodiv-ephemeral"
 }
 
 variable "composer_environment_size" {
   type        = string
   description = "Composer environment size tier. Controls core infrastructure sizing (including the Airflow database)."
-
   default = "ENVIRONMENT_SIZE_SMALL"
 
   validation {
@@ -45,16 +39,6 @@ variable "composer_environment_size" {
     )
     error_message = "composer_environment_size must be one of ENVIRONMENT_SIZE_SMALL, ENVIRONMENT_SIZE_MEDIUM, ENVIRONMENT_SIZE_LARGE."
   }
-}
-
-# --------------------------------------------------------------------
-# Dataflow configuration (best practice: dedicated worker service account)
-# --------------------------------------------------------------------
-
-variable "dataflow_worker_sa_account_id" {
-  type        = string
-  description = "Service account ID used by Dataflow workers (Beam pipelines)."
-  default     = "dataflow-biodiv-worker"
 }
 
 # --------------------------------------------------------------------
@@ -68,31 +52,7 @@ variable "gcs_bucket_name" {
 
 variable "composer_env_bucket_name" {
   type        = string
-  description = "Persistent custom environment bucket for Composer (contains dags/, logs/, plugins/, data/)."
-}
-
-# --------------------------------------------------------------------
-# BigQuery access configuration
-# --------------------------------------------------------------------
-
-variable "bq_datasets" {
-  type        = list(string)
-  description = "BigQuery dataset IDs (dataset name only) that Dataflow workers can write to."
-}
-
-# --------------------------------------------------------------------
-# Artifact Registry access configuration
-# --------------------------------------------------------------------
-
-variable "artifact_registry_repo_names" {
-  type        = list(string)
-  description = "Artifact Registry repository names that store Dataflow Flex Template images."
-}
-
-variable "artifact_registry_location" {
-  type        = string
-  description = "Region where the Artifact Registry repositories are located."
-  default     = "europe-west2"
+  description = "Persistent custom environment bucket for Composer (contains dags/)."
 }
 
 # --------------------------------------------------------------------
