@@ -13,3 +13,12 @@ output "dataflow_worker_sa_email" {
   description = "Service account email used by Dataflow workers."
 }
 
+output "cloudbuild_sa_email" {
+  value       = google_service_account.cloudbuild_lifecycle_sa.email
+  description = "Service account email used by Cloud Build triggers."
+}
+
+output "workflows_sa_email" {
+  value       = google_service_account.workflows_lifecycle_sa.email
+  description = "Service account email used by Workflows execution."
+}
