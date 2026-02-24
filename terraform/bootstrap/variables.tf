@@ -98,3 +98,16 @@ variable "workflows_sa_name" {
   type        = string
   default     = "wf-biodiv-composer-lifecycle"
 }
+
+# --------------------------------------------------------------------
+# Terraform buckets
+# -------------------------------------------------------------------
+variable "terraform_state_bucket" {
+  description = "GCS bucket name (no gs://) used as the Terraform remote state backend."
+  type        = string
+}
+
+variable "terraform_vars_bucket" {
+  description = "GCS bucket name (no gs://) where the tfvars object is stored."
+  type        = string
+}
