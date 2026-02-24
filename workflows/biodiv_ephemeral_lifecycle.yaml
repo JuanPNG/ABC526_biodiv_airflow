@@ -1,0 +1,278 @@
+# Ephemeral Composer 3 lifecycle orchestrator:
+# 1) Run Cloud Build apply trigger (creates/updates Composer env via Terraform)
+# 2) Wait for Composer env RUNNING
+# 3) Mint access token via IAM Credentials (googleapis.com allowed by Workflows OAuth2)
+# 4) Trigger Airflow DAG via Airflow REST API (composer.googleusercontent.com requires Bearer token header)
+# 5) Poll DAG run to terminal state
+# 6) Always run Cloud Build destroy trigger (best-effort cleanup)
+#
+# Failure semantics:
+# - If apply/wait/DAG fails: workflow ends FAILED, but cleanup is still attempted and cleanup errors are ignored.
+# - If cleanup fails: workflow still ends SUCCESS/FAILED based on lifecycle result; cleanup failure is only logged.
+
+# Expected args:
+#   project_id (required)
+#   region (required, e.g. europe-west2)
+#   composer_env_name (required)
+#   apply_trigger_id (required)
+#   destroy_trigger_id (required)
+#   branch_name (required)
+#   dag_id (required)
+#   wf_service_account (required: email used for IAM Credentials generateAccessToken)
+#   dag_conf (optional map/object)
+#   poll_seconds (optional, default 120)
+#   env_timeout_seconds (optional, default 3600)
+#   dag_timeout_seconds (optional, default 10800)
+
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - project_id: ${args.project_id}
+          - region: ${args.region}
+          - composer_env_name: ${args.composer_env_name}
+          - apply_trigger_id: ${args.apply_trigger_id}
+          - destroy_trigger_id: ${args.destroy_trigger_id}
+          - branch_name: ${args.branch_name}
+          - dag_id: ${args.dag_id}
+          - wf_service_account: ${args.wf_service_account}
+          - dag_conf: ${map.get(args, "dag_conf")}
+          - poll_seconds: ${default(map.get(args, "poll_seconds"), 120)}
+          - env_timeout_seconds: ${default(map.get(args, "env_timeout_seconds"), 3600)}
+          - dag_timeout_seconds: ${default(map.get(args, "dag_timeout_seconds"), 10800)}
+
+          # Capture primary failure only (cleanup never overrides this)
+          - lifecycle_error: null
+          - lifecycle_error_msg: null
+          - success_payload: null
+
+    # === APPLY + DAG EXECUTION ===
+    - run_lifecycle:
+        try:
+          steps:
+            # 1) Run apply trigger (waits for build completion)
+            # Note: cloudbuild.triggers.run blocks until the triggered build completes (unless connector timeout is hit).
+            - run_apply:
+                call: googleapis.cloudbuild.v1.projects.locations.triggers.run
+                args:
+                  name: ${"projects/" + project_id + "/locations/" + region + "/triggers/" + apply_trigger_id}
+                  body:
+                    projectId: ${project_id}
+                    triggerId: ${apply_trigger_id}
+                    source:
+                      branchName: ${branch_name}
+                result: apply_op
+
+            # 2) Wait until Composer env is RUNNING
+            - wait_env_running:
+                call: wait_composer_running
+                args:
+                  project_id: ${project_id}
+                  region: ${region}
+                  composer_env_name: ${composer_env_name}
+                  poll_seconds: ${poll_seconds}
+                  timeout_seconds: ${env_timeout_seconds}
+                result: composer_env
+
+            - set_airflow_base:
+                assign:
+                  - airflow_base: ${composer_env.config.airflowUri}
+
+            # 2b) Mint access token using IAM Credentials REST API
+            # Workflows OAuth2 auth can only be attached automatically for *.googleapis.com.
+            # Airflow Webserver is on *.composer.googleusercontent.com, so we mint an OAuth2 access token
+            # via IAM Credentials and pass it manually via Authorization: Bearer <token>.
+            - mint_airflow_token:
+                call: http.post
+                args:
+                  url: ${"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/" + wf_service_account + ":generateAccessToken"}
+                  auth:
+                    type: OAuth2
+                  headers:
+                    Content-Type: application/json
+                  body:
+                    scope:
+                      - "https://www.googleapis.com/auth/cloud-platform"
+                    lifetime: "3600s"
+                result: token_resp
+
+            - set_access_token:
+                assign:
+                  - airflow_access_token: ${token_resp.body.accessToken}
+
+            # 3) Trigger DAG run (use Bearer token; no Workflows OAuth2 on googleusercontent.com)
+            - trigger_dag:
+                call: http.post
+                args:
+                  url: ${airflow_base + "/api/v1/dags/" + dag_id + "/dagRuns"}
+                  headers:
+                    Content-Type: application/json
+                    Authorization: ${"Bearer " + airflow_access_token}
+                  body:
+                    conf: ${dag_conf}
+                result: dagrun_resp
+
+            - set_dagrun_id:
+                assign:
+                  - dag_run_id: ${dagrun_resp.body.dag_run_id}
+
+            # 4) Wait for DAG completion
+            - wait_dag_terminal:
+                call: wait_airflow_dagrun_terminal
+                args:
+                  airflow_base: ${airflow_base}
+                  dag_id: ${dag_id}
+                  dag_run_id: ${dag_run_id}
+                  airflow_access_token: ${airflow_access_token}
+                  poll_seconds: ${poll_seconds}
+                  timeout_seconds: ${dag_timeout_seconds}
+                result: final_state
+
+            - set_success_payload:
+                assign:
+                  - success_payload:
+                      project_id: ${project_id}
+                      region: ${region}
+                      composer_env: ${composer_env_name}
+                      dag_id: ${dag_id}
+                      dag_run_id: ${dag_run_id}
+                      state: ${final_state.state}
+
+        except:
+          as: e
+          steps:
+            - capture_error:
+                assign:
+                  - lifecycle_error: ${e}
+                  - lifecycle_error_msg: '${"Lifecycle failed: " + string(e)}'
+
+    # === DESTROY ENVIRONMENT (BEST-EFFORT ONLY) ===
+    # Note: cloudbuild.triggers.run blocks until the triggered build completes (unless connector timeout is hit).
+    - destroy_env:
+        try:
+          steps:
+            - run_destroy:
+                call: googleapis.cloudbuild.v1.projects.locations.triggers.run
+                args:
+                  name: ${"projects/" + project_id + "/locations/" + region + "/triggers/" + destroy_trigger_id}
+                  body:
+                    projectId: ${project_id}
+                    triggerId: ${destroy_trigger_id}
+                    source:
+                      branchName: ${branch_name}
+                result: destroy_op
+        except:
+          as: destroy_e
+          steps:
+            - log_destroy_error_ignored:
+                call: sys.log
+                args:
+                  text: '${"Destroy failed but ignored: " + string(destroy_e)}'
+                  severity: "WARNING"
+
+    # === FINALIZATION ===
+    - finalize:
+        switch:
+          - condition: ${lifecycle_error_msg != null}
+            steps:
+              - rethrow_lifecycle:
+                  raise: ${lifecycle_error_msg}
+          - condition: ${true}
+            steps:
+              - return_success:
+                  return: ${success_payload}
+
+# ===============================
+# SUBWORKFLOWS
+# ===============================
+
+wait_composer_running:
+  params: [project_id, region, composer_env_name, poll_seconds, timeout_seconds]
+  steps:
+    - init:
+        assign:
+          - deadline: ${sys.now() + timeout_seconds}
+
+    - get_env:
+        call: http.get
+        args:
+          url: ${"https://composer.googleapis.com/v1/projects/" + project_id + "/locations/" + region + "/environments/" + composer_env_name}
+          auth:
+            type: OAuth2
+        result: composer_env
+
+    - decide:
+        switch:
+          - condition: ${composer_env.body.state == "RUNNING"}
+            next: return_env
+          - condition: ${composer_env.body.state == "ERROR"}
+            next: raise_error
+          - condition: ${sys.now() > deadline}
+            next: timeout
+          - condition: ${true}
+            next: sleep
+
+    - sleep:
+        call: sys.sleep
+        args:
+          seconds: ${poll_seconds}
+        next: get_env
+
+    - raise_error:
+        raise: '${"Composer environment entered ERROR: " + composer_env_name}'
+
+    - timeout:
+        raise: '${"Timeout waiting for Composer RUNNING: " + composer_env_name}'
+
+    - return_env:
+        return: ${composer_env.body}
+
+wait_airflow_dagrun_terminal:
+  params: [airflow_base, dag_id, dag_run_id, airflow_access_token, poll_seconds, timeout_seconds]
+  steps:
+    - init:
+        assign:
+          - deadline: ${sys.now() + timeout_seconds}
+
+    - get_dagrun:
+        call: http.get
+        args:
+          url: ${airflow_base + "/api/v1/dags/" + dag_id + "/dagRuns/" + dag_run_id}
+          headers:
+            Authorization: ${"Bearer " + airflow_access_token}
+        result: r
+
+    - extract_state:
+        assign:
+          - state: ${r.body.state}
+
+    # Terminal states expected from Airflow API:
+    # - success => succeed workflow lifecycle
+    # - failed/error => fail workflow lifecycle
+    # Any other state is treated as non-terminal and will be polled until timeout.
+    - decide:
+        switch:
+          - condition: ${state == "success"}
+            next: return_success
+          - condition: ${(state == "failed") or (state == "error")}
+            next: raise_failed
+          - condition: ${sys.now() > deadline}
+            next: timeout
+          - condition: ${true}
+            next: sleep
+
+    - sleep:
+        call: sys.sleep
+        args:
+          seconds: ${poll_seconds}
+        next: get_dagrun
+
+    - return_success:
+        return: ${r.body}
+
+    - raise_failed:
+        raise: '${"DAG run failed: " + dag_id + " run=" + dag_run_id + " state=" + state}'
+
+    - timeout:
+        raise: '${"Timeout waiting for DAG run terminal: " + dag_id + " run=" + dag_run_id}'
