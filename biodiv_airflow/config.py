@@ -49,6 +49,9 @@ class BiodivConfig:
     climate_layers: str
     ecoregions_vector: str
 
+    # --------- Environment clean up ----------
+    delete_service: str
+
 
 def load_config() -> BiodivConfig:
     """
@@ -122,6 +125,9 @@ def load_config() -> BiodivConfig:
     climate_layers = f"{output_base}/data/climate"
     ecoregions_vector = f"{output_base}/data/bioregions/Ecoregions2017.zip"
 
+    # Delete service account
+    delete_service = Variable.get("dev_delete_service_url", default_var=None)
+
     return BiodivConfig(
         gcp_project=gcp_project,
         gcp_region=gcp_region,
@@ -154,4 +160,5 @@ def load_config() -> BiodivConfig:
         centroids_shapefile=centroids_shapefile,
         climate_layers=climate_layers,
         ecoregions_vector=ecoregions_vector,
+        delete_service=delete_service,
     )
