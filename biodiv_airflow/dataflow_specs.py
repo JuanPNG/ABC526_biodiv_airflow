@@ -31,7 +31,7 @@ def taxonomy_body(cfg: BiodivConfig) -> dict[str, Any]:
                 "pages": "1",
                 "output": f"{cfg.run_prefix}/taxonomy/taxonomy",
                 "bq_schema": f"{cfg.output_base}/schemas/bq_taxonomy_schema.json",
-                "bq_table": f"{cfg.gcp_project}:{cfg.bq_dataset}.bq_taxonomy_validated",
+                "bq_table": f"{cfg.gcp_project}:{cfg.bq_dataset}.bp_taxonomy_validated",
                 "sdk_container_image": cfg.sdk_container_image,
                 "experiments": "use_runner_v2",
             },
