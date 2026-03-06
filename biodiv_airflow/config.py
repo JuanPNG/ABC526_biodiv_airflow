@@ -18,9 +18,15 @@ class BiodivConfig:
     sdk_container_image: str
     dataflow_service_account: str
 
+    # --------- ElasticSearch ---------
     elastic_host: str
     elastic_user: str
     elastic_password: str
+    elastic_pages: int
+    elastic_size: int
+
+    # --------- ENA throttling ---------
+    ena_sleep_s: int
 
     # --------- BigQuery ----------
     bq_dataset: str
@@ -98,6 +104,10 @@ def load_config() -> BiodivConfig:
     elastic_host = Variable.get("elasticsearch_host", default_var=None)
     elastic_user = Variable.get("elasticsearch_user", default_var=None)
     elastic_password = Variable.get("elasticsearch_password", default_var=None)
+    elastic_pages = Variable.get("elasticsearch_pages", default_var=0)  # default_var=0 -> Fetch all.
+    elastic_size = Variable.get("elasticsearch_size", default_var=100)
+
+    ena_sleep_s = Variable.get("ena_sleep_s", default_var=0.25)
 
     bq_dataset = Variable.get("biodiv_bq_dataset", default_var=None)
 
@@ -150,6 +160,9 @@ def load_config() -> BiodivConfig:
         elastic_host=elastic_host,
         elastic_user=elastic_user,
         elastic_password=elastic_password,
+        elastic_pages=elastic_pages,
+        elastic_size=elastic_size,
+        ena_sleep_s = ena_sleep_s,
         bq_dataset=bq_dataset,
         beam_min_batch_size=beam_min_batch_size,
         beam_max_batch_size=beam_max_batch_size,
