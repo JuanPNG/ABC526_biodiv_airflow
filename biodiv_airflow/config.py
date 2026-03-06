@@ -22,7 +22,12 @@ class BiodivConfig:
     elastic_user: str
     elastic_password: str
 
+    # --------- BigQuery ----------
     bq_dataset: str
+
+    # --------- Beam ----------
+    beam_min_batch_size: int
+    beam_max_batch_size: int
 
     # --------- Derived (computed) ----------
     run_prefix: str
@@ -96,6 +101,9 @@ def load_config() -> BiodivConfig:
 
     bq_dataset = Variable.get("biodiv_bq_dataset", default_var=None)
 
+    beam_min_batch_size = Variable.get("beam_min_batch_size", default_var=50)
+    beam_max_batch_size = Variable.get("beam_max_batch_size", default_var=200)
+
     # Keep artifacts isolated per DAG run
     run_prefix = (
         f"{output_base}/runs/"
@@ -143,6 +151,8 @@ def load_config() -> BiodivConfig:
         elastic_user=elastic_user,
         elastic_password=elastic_password,
         bq_dataset=bq_dataset,
+        beam_min_batch_size=beam_min_batch_size,
+        beam_max_batch_size=beam_max_batch_size,
         run_prefix=run_prefix,
         taxonomy_template=taxonomy_template,
         occurrences_template=occurrences_template,
