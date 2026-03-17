@@ -1,10 +1,10 @@
+import requests
+import time
+
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from biodiv_airflow.config import BiodivConfig
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
-
-import requests
-import time
 
 
 def split_gcs_uri(gcs_uri: str) -> tuple[str, str]:
@@ -123,3 +123,162 @@ def validate_config(cfg: BiodivConfig) -> str:
         raise ValueError("run_prefix does not contain expected partitions")
 
     return "config_ok"
+
+
+# -------------------------------
+# Helpers for Airflow gate
+# -------------------------------
+def _fetch_es_annotated_tax_ids(
+    *,
+    host: str,
+    user: str,
+    password: str,
+    index: str,
+    page_size: int,
+    max_pages: int,
+) -> set[str]:
+    from elasticsearch import Elasticsearch
+
+    es = Elasticsearch(
+        hosts=host,
+        basic_auth=(user, password),
+        request_timeout=30,
+        retry_on_timeout=True,
+        max_retries=3,
+    )
+
+    tax_ids: set[str] = set()
+    after = None
+    page_i = 0
+
+    max_pages = max_pages if max_pages is not None else 0  # 0 => fetch all
+
+    def should_continue(i: int) -> bool:
+        return (max_pages <= 0) or (i < max_pages)
+
+    while should_continue(page_i):
+        search_kwargs = {
+            "index": index,
+            "size": page_size,
+            "sort": [{"tax_id": "asc"}],
+            "query": {"term": {"annotation_complete": "Done"}},
+            "_source": ["tax_id"],
+        }
+
+        if after is not None:
+            search_kwargs["search_after"] = after
+
+        response = es.search(**search_kwargs)
+        hits = response.get("hits", {}).get("hits", [])
+
+        if not hits:
+            break
+
+        for hit in hits:
+            src = hit.get("_source", {}) or {}
+            tax_id = src.get("tax_id")
+            if tax_id is not None:
+                tax_ids.add(str(tax_id))
+
+        last_sort = hits[-1].get("sort")
+        if last_sort is None:
+            raise RuntimeError(
+                "Elasticsearch response missing 'sort' values for search_after pagination."
+            )
+
+        after = last_sort
+        page_i += 1
+
+    return tax_ids
+
+
+def _fetch_bq_logged_tax_ids(
+    *,
+    project_id: str,
+    bq_dataset: str,
+    gate_table: str = "bp_log_taxonomy",
+) -> set[str]:
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=project_id)
+
+    query = f"""
+        SELECT DISTINCT tax_id
+        FROM `{project_id}.{bq_dataset}.{gate_table}`
+        WHERE tax_id IS NOT NULL
+    """
+
+    rows = client.query(query).result()
+    return {str(row["tax_id"]) for row in rows if row["tax_id"] is not None}
+
+
+def evaluate_new_species_gate(
+    cfg: BiodivConfig,
+    *,
+    elastic_index: str = "data_portal",
+    gate_table: str = "bp_log_taxonomy",
+) -> dict:
+    threshold = int(cfg.min_new_species_threshold)
+
+    es_tax_ids = _fetch_es_annotated_tax_ids(
+        host=cfg.elastic_host,
+        user=cfg.elastic_user,
+        password=cfg.elastic_password,
+        index=elastic_index,
+        page_size=int(cfg.elastic_size),
+        max_pages=int(cfg.elastic_pages),
+    )
+
+    bq_tax_ids = _fetch_bq_logged_tax_ids(
+        project_id=cfg.gcp_project,
+        bq_dataset=cfg.bq_dataset,
+        gate_table=gate_table,
+    )
+
+    new_tax_ids = sorted(es_tax_ids - bq_tax_ids)
+
+    result = {
+        "should_run": len(new_tax_ids) >= threshold,
+        "threshold": threshold,
+        "annotated_tax_ids_count": len(es_tax_ids),
+        "existing_tax_ids_count": len(bq_tax_ids),
+        "new_tax_ids_count": len(new_tax_ids),
+        "sample_new_tax_ids": new_tax_ids[:20],
+    }
+
+    print(f"[GATE] threshold={result['threshold']}")
+    print(f"[GATE] annotated_tax_ids_count={result['annotated_tax_ids_count']}")
+    print(f"[GATE] existing_tax_ids_count={result['existing_tax_ids_count']}")
+    print(f"[GATE] new_tax_ids_count={result['new_tax_ids_count']}")
+    print(f"[GATE] should_run={result['should_run']}")
+    print(f"[GATE] sample_new_tax_ids={result['sample_new_tax_ids']}")
+
+    return result
+
+
+def choose_branch(
+    cfg: BiodivConfig,
+    *,
+    elastic_index: str = "data_portal",
+    gate_table: str = "bp_log_taxonomy",
+    run_task_id: str = "run_taxonomy",
+    skip_task_id: str = "mark_pipelines_skip_success",
+    **context,
+) -> str:
+    result = evaluate_new_species_gate(
+        cfg,
+        elastic_index=elastic_index,
+        gate_table=gate_table,
+    )
+
+    ti = context.get("ti")
+    if ti:
+        ti.xcom_push(key="gate_result", value=result)
+
+    if result["should_run"]:
+        print(f"[GATE] Threshold met. Continuing pipeline. gate_result={result}")
+        return run_task_id
+    else:
+        print(f"[GATE] Threshold not met. Skipping pipeline. gate_result={result}")
+        return skip_task_id
+
