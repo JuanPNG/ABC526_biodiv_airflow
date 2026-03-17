@@ -2,11 +2,15 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.google.cloud.operators.dataflow import DataflowStartFlexTemplateOperator
-from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator, BranchPythonOperator
 
-from biodiv_airflow.config import load_config
-from biodiv_airflow.helpers import write_gcs_marker, validate_config
 from biodiv_airflow import dataflow_specs
+from biodiv_airflow.config import load_config
+from biodiv_airflow.helpers import (
+    write_gcs_marker,
+    validate_config,
+    choose_branch,
+)
 
 
 default_args = {
@@ -30,6 +34,18 @@ with DAG(
     validate = PythonOperator(
         task_id="validate_config",
         python_callable=lambda: validate_config(cfg),
+    )
+
+    check_new_species_gate = BranchPythonOperator(
+        task_id="check_new_species_gate",
+        python_callable=choose_branch,
+        op_kwargs={
+            "cfg": cfg,
+            "elastic_index": "data_portal",
+            "gate_table": "bp_log_taxonomy",
+            "run_task_id": "run_taxonomy",
+            "skip_task_id": "mark_pipelines_skip_success",
+        },
     )
 
     run_taxonomy = DataflowStartFlexTemplateOperator(
@@ -122,19 +138,28 @@ with DAG(
         op_kwargs={"gcs_marker_uri": f"{cfg.run_prefix}/_SUCCESS"},
     )
 
+    mark_pipelines_skip_success = PythonOperator(
+        task_id="mark_pipelines_skip_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{cfg.run_prefix}/_SKIPPED"},
+    )
+
+    validate >> check_new_species_gate
+    check_new_species_gate >> run_taxonomy
+    check_new_species_gate >> mark_pipelines_skip_success
+
     (
-        validate
-        >> run_taxonomy
-        >> mark_taxonomy_success
-        >> run_occurrences
-        >> mark_occurrences_success
-        >> run_cleaning_occs
-        >> mark_cleaning_occs_success
-        >> run_spatial_annotation
-        >> mark_spatial_annotation_success
-        >> run_range_estimation
-        >> mark_range_estimation_success
-        >> run_data_provenance
-        >> mark_data_provenance_success
-        >> mark_pipelines_completion_success
+            run_taxonomy
+            >> mark_taxonomy_success
+            >> run_occurrences
+            >> mark_occurrences_success
+            >> run_cleaning_occs
+            >> mark_cleaning_occs_success
+            >> run_spatial_annotation
+            >> mark_spatial_annotation_success
+            >> run_range_estimation
+            >> mark_range_estimation_success
+            >> run_data_provenance
+            >> mark_data_provenance_success
+            >> mark_pipelines_completion_success
     )
