@@ -22,18 +22,18 @@ class BiodivConfig:
     elastic_host: str
     elastic_user: str
     elastic_password: str
-    elastic_pages: int
-    elastic_size: int
+    elastic_pages: str
+    elastic_size: str
 
     # --------- ENA throttling ---------
-    ena_sleep_s: int
+    ena_sleep_s: str
 
     # --------- BigQuery ----------
     bq_dataset: str
 
     # --------- Beam ----------
-    beam_min_batch_size: int
-    beam_max_batch_size: int
+    beam_min_batch_size: str
+    beam_max_batch_size: str
 
     # --------- Derived (computed) ----------
     run_prefix: str
@@ -59,6 +59,9 @@ class BiodivConfig:
     centroids_shapefile: str
     climate_layers: str
     ecoregions_vector: str
+
+    # --------- Airflow gate threshold ----------
+    min_new_species_threshold: str
 
     # --------- Environment clean up ----------
     delete_service: str
@@ -104,15 +107,15 @@ def load_config() -> BiodivConfig:
     elastic_host = Variable.get("elasticsearch_host", default_var=None)
     elastic_user = Variable.get("elasticsearch_user", default_var=None)
     elastic_password = Variable.get("elasticsearch_password", default_var=None)
-    elastic_pages = Variable.get("elasticsearch_pages", default_var=0)  # default_var=0 -> Fetch all.
-    elastic_size = Variable.get("elasticsearch_size", default_var=100)
+    elastic_pages = Variable.get("elasticsearch_pages", default_var="0")  # default_var=0 -> Fetch all.
+    elastic_size = Variable.get("elasticsearch_size", default_var="100")
 
-    ena_sleep_s = Variable.get("ena_sleep_s", default_var=0.25)
+    ena_sleep_s = Variable.get("ena_sleep_s", default_var="0.25")
 
     bq_dataset = Variable.get("biodiv_bq_dataset", default_var=None)
 
-    beam_min_batch_size = Variable.get("beam_min_batch_size", default_var=50)
-    beam_max_batch_size = Variable.get("beam_max_batch_size", default_var=200)
+    beam_min_batch_size = Variable.get("beam_min_batch_size", default_var="50")
+    beam_max_batch_size = Variable.get("beam_max_batch_size", default_var="200")
 
     # Keep artifacts isolated per DAG run
     run_prefix = (
@@ -142,6 +145,9 @@ def load_config() -> BiodivConfig:
     centroids_shapefile = f"{output_base}/data/spatial_processing/ne_10m_admin_0_label_points/ne_10m_admin_0_label_points.shp"
     climate_layers = f"{output_base}/data/climate"
     ecoregions_vector = f"{output_base}/data/bioregions/Ecoregions2017.zip"
+
+    # Airflow gate threshold
+    min_new_species_threshold = Variable.get("min_new_species_threshold", default_var="10")
 
     # Delete service account
     delete_service = Variable.get("dev_delete_service_url", default_var=None)
@@ -183,5 +189,6 @@ def load_config() -> BiodivConfig:
         centroids_shapefile=centroids_shapefile,
         climate_layers=climate_layers,
         ecoregions_vector=ecoregions_vector,
+        min_new_species_threshold=min_new_species_threshold,
         delete_service=delete_service,
     )
