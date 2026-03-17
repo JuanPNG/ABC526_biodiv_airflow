@@ -33,7 +33,7 @@ with DAG(
 
     validate = PythonOperator(
         task_id="validate_config",
-        python_callable=lambda: validate_config(cfg),
+        python_callable=lambda: validate_config(cfg, require_delete_service=False),
     )
 
     check_new_species_gate = BranchPythonOperator(
