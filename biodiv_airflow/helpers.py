@@ -93,34 +93,39 @@ def call_delete_service(
     raise RuntimeError(f"Delete service failed after {max_attempts} attempts: {last_err}")
 
 
-def validate_config(cfg: BiodivConfig) -> str:
+def validate_config(cfg: BiodivConfig, *, require_delete_service: bool = False) -> str:
     required_vars = {
         "biodiv_gcp_project": cfg.gcp_project,
+        "biodiv_gcp_region": cfg.gcp_region,
         "biodiv_bucket": cfg.gcs_bucket,
-        "biodiv_sdk_container_image": cfg.sdk_container_image,
-        "biodiv_output_base": cfg.output_base,
+        "biodiv_image_tag": cfg.image_tag,
+        "biodiv_dataflow_worker_sa_email": cfg.dataflow_service_account,
+        "elasticsearch_host": cfg.elastic_host,
+        "elasticsearch_user": cfg.elastic_user,
+        "elasticsearch_password": cfg.elastic_password,
+        "biodiv_bq_dataset": cfg.bq_dataset,
     }
+
+    if require_delete_service:
+        required_vars["dev_delete_service_url"] = cfg.delete_service
 
     missing = []
     for k, v in required_vars.items():
         sv = str(v).strip()
-        if not sv or "local" in sv:
+        if not sv or sv.lower() == "none":
             missing.append(k)
 
     if missing:
-        raise ValueError(f"Missing or default Airflow Variables: {', '.join(missing)}")
+        raise ValueError(f"Missing Airflow Variables: {', '.join(missing)}")
 
-    # Sanity checks for Flex template paths
-    if not cfg.flex_base.startswith("gs://"):
-        raise ValueError("FLEX_BASE must be a GCS path")
-
-    # Check elastic search password is set
-    if not cfg.elastic_password:
-        raise ValueError("elasticsearch_password is empty")
-
-    # Ensure run_prefix is well-formed (same check as your DAG)
-    if "window_start=" not in cfg.run_prefix or "run_ts=" not in cfg.run_prefix:
-        raise ValueError("run_prefix does not contain expected partitions")
+    try:
+        int(cfg.min_new_species_threshold)
+        int(cfg.elastic_pages)
+        int(cfg.elastic_size)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            "min_new_species_threshold, elasticsearch_pages, and elasticsearch_size must be integers"
+        ) from e
 
     return "config_ok"
 
