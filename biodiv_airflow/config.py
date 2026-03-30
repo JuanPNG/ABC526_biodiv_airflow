@@ -138,13 +138,13 @@ def load_config() -> BiodivConfig:
     cleaned_occurrences = f"{run_prefix}/occurrences/cleaned"
     spatial_annotations = f"{run_prefix}/spatial"
     range_estimates = f"{run_prefix}/range_estimates"
-    data_provenance = f"{run_prefix}/data_provenance"
+    data_provenance = f"{run_prefix}/data_provenance/metadata_urls"
 
     # Input data
     continental_land_shapefile = f"{output_base}/data/spatial_processing/ne_10m_land/ne_10m_land.shp"
     centroids_shapefile = f"{output_base}/data/spatial_processing/ne_10m_admin_0_label_points/ne_10m_admin_0_label_points.shp"
     climate_layers = f"{output_base}/data/climate"
-    ecoregions_vector = f"{output_base}/data/bioregions/Ecoregions2017.zip"
+    ecoregions_vector = f"{output_base}/data/bioregions/Ecoregions2017.shp"
 
     # Airflow gate threshold
     min_new_species_threshold = Variable.get("min_new_species_threshold", default_var="10")
