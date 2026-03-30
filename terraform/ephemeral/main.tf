@@ -25,6 +25,11 @@ resource "google_composer_environment" "env" {
     software_config {
       image_version = var.image_version
 
+      pypi_packages = {
+        elasticsearch        = "==8.15.1"
+        google-cloud-bigquery = "==3.25.0"
+      }
+
       env_variables = merge(
         {
           AIRFLOW_VAR_BIODIV_GCP_PROJECT = var.project_id
