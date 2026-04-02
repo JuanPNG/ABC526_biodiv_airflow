@@ -7,10 +7,14 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.google.cloud.operators.dataflow import DataflowStartFlexTemplateOperator
-from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator, BranchPythonOperator
 
 from biodiv_airflow.config import load_config
-from biodiv_airflow.helpers import write_gcs_marker, validate_config, call_delete_service
+from biodiv_airflow.helpers import (
+    write_gcs_marker,
+    validate_config,
+    choose_branch,
+    call_delete_service)
 from biodiv_airflow import dataflow_specs
 
 
@@ -34,7 +38,19 @@ with DAG(
 
     validate = PythonOperator(
         task_id="validate_config",
-        python_callable=lambda: validate_config(cfg),
+        python_callable=lambda: validate_config(cfg, require_delete_service=True),
+    )
+
+    check_new_species_gate = BranchPythonOperator(
+        task_id="check_new_species_gate",
+        python_callable=choose_branch,
+        op_kwargs={
+            "cfg": cfg,
+            "elastic_index": "data_portal",
+            "gate_table": "bp_log_taxonomy",
+            "run_task_id": "run_taxonomy",
+            "skip_task_id": "mark_pipelines_skip_success",
+        },
     )
 
     run_taxonomy = DataflowStartFlexTemplateOperator(
@@ -127,6 +143,12 @@ with DAG(
         op_kwargs={"gcs_marker_uri": f"{cfg.run_prefix}/_SUCCESS"},
     )
 
+    mark_pipelines_skip_success = PythonOperator(
+        task_id="mark_pipelines_skip_success",
+        python_callable=write_gcs_marker,
+        op_kwargs={"gcs_marker_uri": f"{cfg.run_prefix}/_SKIPPED"},
+    )
+
     delete_env = PythonOperator(
         task_id="delete_composer_env",
         python_callable=lambda: call_delete_service(
@@ -140,9 +162,12 @@ with DAG(
         execution_timeout=None,
     )
 
+    validate >> check_new_species_gate
+    check_new_species_gate >> run_taxonomy
+    check_new_species_gate >> mark_pipelines_skip_success >> delete_env
+
     (
-        validate
-        >> run_taxonomy
+        run_taxonomy
         >> mark_taxonomy_success
         >> run_occurrences
         >> mark_occurrences_success
