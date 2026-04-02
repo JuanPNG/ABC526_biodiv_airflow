@@ -150,7 +150,7 @@ def load_config() -> BiodivConfig:
     min_new_species_threshold = Variable.get("min_new_species_threshold", default_var="10")
 
     # Delete service account
-    delete_service = Variable.get("dev_delete_service_url", default_var=None)
+    delete_service = Variable.get("delete_service_url", default_var=None)
 
     return BiodivConfig(
         gcp_project=gcp_project,
