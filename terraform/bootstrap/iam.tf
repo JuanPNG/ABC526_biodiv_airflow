@@ -47,6 +47,15 @@ resource "google_project_iam_member" "composer_bq_job_user" {
   member  = "serviceAccount:${local.composer_sa}"
 }
 
+# BigQuery datasets read permission
+resource "google_bigquery_dataset_access" "composer_bq_data_viewer_access" {
+  for_each   = toset(var.bq_datasets)
+  project    = var.project_id
+  dataset_id = each.value
+  role          = "roles/bigquery.dataViewer"
+  user_by_email = local.composer_sa
+}
+
 # GCS: Composer writes _SUCCESS markers and may read them later.
 # Dedicated bucket => simple bucket-level object permissions.
 resource "google_storage_bucket_iam_member" "composer_bucket_object_admin" {
@@ -113,6 +122,29 @@ resource "google_bigquery_dataset_access" "dataflow_bq_data_editor_access" {
 
   role          = "roles/bigquery.dataEditor"
   user_by_email = local.dataflow_sa
+}
+
+# ------------------------------------------------------------------------------
+# TEMPORARY / PROVISIONAL FIX
+# ------------------------------------------------------------------------------
+# The Dataflow worker service account requires `bigquery.datasets.create`
+# because Apache Beam is currently using a query-based BigQuery read path,
+# which triggers creation of a temporary dataset at runtime.
+#
+# This is NOT aligned with strict least-privilege:
+# - roles/bigquery.user grants project-level dataset creation
+# - broader than our intended dataset-scoped IAM model
+#
+# TODO (IMPORTANT):
+# Replace this with a dedicated, pre-created temp dataset (e.g. beam_temp)
+# and configure the Beam pipeline to use it explicitly (temp_dataset).
+# Then remove this role and grant dataset-level access instead.
+# ------------------------------------------------------------------------------
+
+resource "google_project_iam_member" "dataflow_bq_user" {
+  project = var.project_id
+  role    = "roles/bigquery.user"
+  member  = "serviceAccount:${local.dataflow_sa}"
 }
 
 # Workers must pull the SDK container image from Artifact Registry.
