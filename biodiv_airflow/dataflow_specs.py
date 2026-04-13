@@ -51,7 +51,7 @@ def occurrences_body(cfg: BiodivConfig) -> dict[str, Any]:
                 "pipeline": "occurrences",
                 "validated_input": cfg.taxonomy_validated,
                 "output_dir": cfg.raw_occurrences,
-                "limit": "100",
+                "limit": "300",
                 "sdk_container_image": cfg.sdk_container_image,
                 "experiments": "use_runner_v2",
             },
