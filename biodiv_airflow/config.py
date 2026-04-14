@@ -28,6 +28,13 @@ class BiodivConfig:
     # --------- ENA throttling ---------
     ena_sleep_s: str
 
+    # --------- GBIF throttling ---------
+    gbif_limit: str
+    gbif_sleep_s: str
+    gbif_retry_delay_s: str
+    gbif_max_retries: str
+
+
     # --------- BigQuery ----------
     bq_dataset: str
 
@@ -112,6 +119,11 @@ def load_config() -> BiodivConfig:
 
     ena_sleep_s = Variable.get("ena_sleep_s", default_var="0.25")
 
+    gbif_limit = Variable.get("gbif_limit", default_var="300")
+    gbif_sleep_s = Variable.get("sleep_seconds", default_var="0.25")
+    gbif_retry_delay_s = Variable.get("retry_delay_seconds", default_var="1")
+    gbif_max_retries = Variable.get("max_retries", default_var="3")
+
     bq_dataset = Variable.get("biodiv_bq_dataset", default_var=None)
 
     beam_min_batch_size = Variable.get("beam_min_batch_size", default_var="50")
@@ -169,6 +181,10 @@ def load_config() -> BiodivConfig:
         elastic_pages=elastic_pages,
         elastic_size=elastic_size,
         ena_sleep_s = ena_sleep_s,
+        gbif_limit = gbif_limit,
+        gbif_sleep_s = gbif_sleep_s,
+        gbif_retry_delay_s = gbif_retry_delay_s,
+        gbif_max_retries = gbif_max_retries,
         bq_dataset=bq_dataset,
         beam_min_batch_size=beam_min_batch_size,
         beam_max_batch_size=beam_max_batch_size,
