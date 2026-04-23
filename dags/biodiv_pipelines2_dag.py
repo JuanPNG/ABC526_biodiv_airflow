@@ -6,6 +6,7 @@
 from datetime import datetime, timedelta
 
 from airflow import DAG
+from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 from airflow.providers.google.cloud.operators.dataflow import DataflowStartFlexTemplateOperator
 from airflow.providers.standard.operators.python import PythonOperator, BranchPythonOperator
 
@@ -15,7 +16,14 @@ from biodiv_airflow.helpers import (
     validate_config,
     choose_branch,
     call_delete_service)
+
 from biodiv_airflow import dataflow_specs
+
+from biodiv_airflow.sql_queries import (
+    build_bq_genome_annotations_summary_sql,
+    build_bq_warehouse_integration_sql,
+)
+
 
 
 default_args = {
@@ -137,6 +145,31 @@ with DAG(
         op_kwargs={"gcs_marker_uri": f"{cfg.data_provenance}/_SUCCESS"},
     )
 
+    # TODO: Add this task later when the annotations ingestion pipeline is ready
+    # run_genome_biotype_summary_bq = BigQueryInsertJobOperator(
+    #     task_id="run_genome_biotype_summary_bq",
+    #     project_id=cfg.gcp_project,
+    #     location=cfg.gcp_region,
+    #     configuration={
+    #         "query": {
+    #             "query": build_bq_genome_annotations_summary_sql(cfg),
+    #             "useLegacySql": False,
+    #         }
+    #     },
+    # )
+
+    run_biodiv_warehouse_integration_bq = BigQueryInsertJobOperator(
+        task_id="run_biodiv_warehouse_integration_bq",
+        project_id=cfg.gcp_project,
+        location=cfg.gcp_region,
+        configuration={
+            "query": {
+                "query": build_bq_warehouse_integration_sql(cfg),
+                "useLegacySql": False,
+            }
+        },
+    )
+
     mark_pipelines_completion_success = PythonOperator(
         task_id="mark_pipelines_completion_success",
         python_callable=write_gcs_marker,
@@ -179,6 +212,8 @@ with DAG(
         >> mark_range_estimation_success
         >> run_data_provenance
         >> mark_data_provenance_success
+        # >> run_genome_biotype_summary_bq
+        >> run_biodiv_warehouse_integration_bq
         >> mark_pipelines_completion_success
         >> delete_env
     )
