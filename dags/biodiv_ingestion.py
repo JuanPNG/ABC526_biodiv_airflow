@@ -68,7 +68,7 @@ with DAG(
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
-    tags={"biodiv", "dataflow", "flex"},
+    tags=["biodiv", "dataflow", "flex"],
 ) as dag:
 
     ###############
