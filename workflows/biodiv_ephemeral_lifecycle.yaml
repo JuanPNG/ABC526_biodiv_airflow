@@ -145,7 +145,7 @@ main:
             - capture_error:
                 assign:
                   - lifecycle_error: ${e}
-                  - lifecycle_error_msg: '${"Lifecycle failed: " + string(e)}'
+                  - lifecycle_error_msg: '${"Lifecycle failed: " + if(e.message != null, e.message, json.encode(e))}'
 
     # === DESTROY ENVIRONMENT (BEST-EFFORT ONLY) ===
     # Note: cloudbuild.triggers.run blocks until the triggered build completes (unless connector timeout is hit).
@@ -168,7 +168,7 @@ main:
             - log_destroy_error_ignored:
                 call: sys.log
                 args:
-                  text: '${"Destroy failed but ignored: " + string(destroy_e)}'
+                  text: '${"Destroy failed but ignored: " + if(destroy_e.message != null, destroy_e.message, json.encode(destroy_e))}'
                   severity: "WARNING"
 
     # === FINALIZATION ===
