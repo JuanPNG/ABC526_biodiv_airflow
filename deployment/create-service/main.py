@@ -25,7 +25,7 @@ def _float_env(name: str, default: float) -> float:
     v = os.environ.get(name, "").strip()
     return float(v) if v else default
 
-215
+
 def _int_env(name: str, default: int) -> int:
     v = os.environ.get(name, "").strip()
     return int(v) if v else default
@@ -41,7 +41,7 @@ def start_composer_environment(http_request):
       PROJECT_ID
       REGION
       COMPOSER_ENV_NAME
-      NODE_SERVICE_ACCOUNT   (use DEFAULT_COMPUTE_SA for prod-parity Option A)
+      NODE_SERVICE_ACCOUNT
       IMAGE_VERSION          (e.g. composer-3-airflow-2.10.2-build.11)
 
     Optional overrides (defaults match your prod code):
@@ -61,7 +61,7 @@ def start_composer_environment(http_request):
     parent = f"projects/{project_id}/locations/{region}"
     env_resource = f"{parent}/environments/{env_name}"
 
-    # --- WorkloadsConfig: defaults match your existing prod code ---
+    # --- WorkloadsConfig ---
     scheduler = WorkloadsConfig.SchedulerResource(
         cpu=_float_env("SCHEDULER_CPU", 1.0),
         memory_gb=_float_env("SCHEDULER_MEM_GB", 4.0),
@@ -97,12 +97,7 @@ def start_composer_environment(http_request):
     )
 
     env_config = EnvironmentConfig(
-        workloads_config=WorkloadsConfig(
-            scheduler=scheduler,
-            web_server=web_server,
-            worker=worker,
-            triggerer=triggerer,
-        ),
+        workloads_config=workloads,
         software_config=SoftwareConfig(
             image_version=image_version,
         ),
@@ -136,5 +131,4 @@ def start_composer_environment(http_request):
 
     except FailedPrecondition as e:
         # Often indicates env is being created/deleted or project not ready for action.
-        # For lifecycle orchestration, you may want to treat this as non-fatal.
         return (f"create not applied due to state (FailedPrecondition): {env_resource}\n{e}\n", 200)
