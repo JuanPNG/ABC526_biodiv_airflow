@@ -2,31 +2,39 @@
 
 ## Overview
 
-This project implements an **ephemeral Cloud Composer lifecycle** using Cloud Run and Cloud Scheduler.
-It runs a DAG that orchestrates Apache Beam pipelines to ingest, transform, and enrich biodiveristy 
-records associated to species with reference genomes and completed genome annotations.
+This repo implements an **ephemeral Cloud Composer lifecycle** using:
 
-Each execution:
+- Cloud Run services
+- Cloud Scheduler jobs
+- Composer snapshots
+- Secret Manager
 
-* creates a Composer environment
-* restores it from a snapshot
-* runs the DAG
-* deletes the environment
+The lifecycle follows a **fixed-delay orchestration model**:
 
+```text
+create → load snapshot → trigger DAG → DAG deletes environment
+```
 This approach minimizes cost while ensuring reproducibility through snapshots.
+
+This README focuses on:
+
+- deployment strategy
+- required infrastructure
+- step-by-step commands
+- operational considerations
 
 ### Architecture
 
-The lifecycle is orchestrated via Cloud Run services:
+#### Components
 
-* **create-service** → creates the environment
-* **load-service** → restores snapshot state
-* **trigger-service** → triggers DAG execution
-* **delete-service** → deletes the environment (called from DAG)
+- `create-service` → Creates Composer environment
+- `load-service` → Loads environment snapshot
+- `trigger-service` → Triggers DAG
+- `delete-service` → Deletes Composer environment
+- `Cloud Scheduler` → Orchestrates lifecycle
+- `Composer snapshot` →	Defines Composer environment state
 
-Cloud Scheduler coordinates execution timing.
-
-### Lifecycle Flow
+#### Lifecycle Flow
 
 ```text id="flow1"
 Cloud Scheduler
@@ -45,145 +53,182 @@ Airflow DAG runs
     ↓
 delete-service (from DAG)
 ```
-
 ---
 
-## Quick Start
+## Deployment Strategy
 
-Run the full lifecycle manually:
+The system uses a snapshot-driven immutable environment model:
 
-### Prerequisites
-
-* gcloud authenticated
-* Cloud Run services deployed:
-
-  * `bp-composer-create`
-  * `bp-composer-load`
-  * `bp-composer-trigger`
-  * `bp-composer-delete`
-* Snapshot available
-* Secret Manager configured
+1. Build a baseline Composer environment
+2. Configure:
+- DAGs
+- Variables
+- Secret Manager backend
+- Python dependencies
+3. Validate pipelines
+4. Create snapshot
+5. Use snapshot for all ephemeral runs
 
 ---
+## Prerequisites
 
-### 1. Set variables
+### 1. Enable APIs
 
-```bash id="qs1"
+```bash
+gcloud services enable \
+  composer.googleapis.com \
+  run.googleapis.com \
+  cloudscheduler.googleapis.com \
+  secretmanager.googleapis.com \
+  artifactregistry.googleapis.com
+```
+### 2. Set environment variables
+
+```bash
 PROJECT_ID="your-project"
 REGION="your-region"
 ENV_NAME="bp-composer-ephemeral"
-
-CREATE_URL=$(gcloud run services describe bp-composer-create \
-  --project "$PROJECT_ID" --region "$REGION" \
-  --format='value(status.url)')
-
-LOAD_URL=$(gcloud run services describe bp-composer-load \
-  --project "$PROJECT_ID" --region "$REGION" \
-  --format='value(status.url)')
-
-TRIGGER_URL=$(gcloud run services describe bp-composer-trigger \
-  --project "$PROJECT_ID" --region "$REGION" \
-  --format='value(status.url)')
-
-SNAPSHOT_PATH="gs://<bucket>/composer-snapshots/<snapshot-root>"
+PIPELINE_BUCKET="gs://your-pipeline-bucket" # Pipeline artifacts
+COMPOSER_BUCKET="gs://your-composer-bucket" # Composer environment and dags
+COMPOSER_SA="<your-composer-service-account>"
+COMP_SA="<your-compute-service-account>"
+ALLOWED_SNAPSHOT_PREFIX="$PIPELINE_BUCKET/composer-snapshots"
 ```
 
----
+## Steps
 
-### 2. Create environment
+### 1. Create a Composer Bucket
 
-```bash id="qs2"
+Benefits:
+
+- stable DAG location
+- no bucket churn
+- easier debugging
+
+Constraint:
+- only one active environment at a time
+
+
+```bash
+gcloud storage buckets create "$BUCKET" --location="$REGION"
+```
+
+### 2. Deploy Cloud Run Services
+
+**Create service**
+
+Creates environment with:
+
+- Airflow image version
+- workloads config
+- service account
+- custom bucket
+
+```bash
+gcloud run deploy bp-composer-create \                    
+  --source ./deployment/create-service \ 
+  --project "$PROJECT_ID" \                   
+  --region "$REGION" \         
+  --service-account "$COMPOSER_SA" \
+  --no-allow-unauthenticated \
+  --set-env-vars \
+    PROJECT_ID="$PROJECT_ID", \
+    REGION="$REGION", \
+    COMPOSER_ENV_NAME="$ENV_NAME", \
+    NODE_SERVICE_ACCOUNT="$COMP_SA", \
+    IMAGE_VERSION="composer-3-airflow-2.10.5-build.32", \
+    COMPOSER_BUCKET="$COMPOSER_BUCKET"
+```
+
+**Load service**
+
+- restores snapshot
+- validates snapshot path
+- asynchronous
+
+
+```bash
+ gcloud run deploy bp-composer-load \                      
+  --source ./deployment/load-service \                
+  --project "$PROJECT_ID" \                   
+  --region "$REGION" \         
+  --service-account "$COMPOSER_SA" \                                      
+  --no-allow-unauthenticated \
+  --set-env-vars \
+    PROJECT_ID="$PROJECT_ID", \
+    REGION="$REGION", \
+    COMPOSER_ENV_NAME="$ENV_NAME", \
+    ALLOWED_SNAPSHOT_PREFIX="$ALLOWED_SNAPSHOT_PREFIX"
+```
+
+**Trigger service**
+
+- fetches Airflow URI dynamically
+- triggers DAG via REST API
+
+```bash
+gcloud run deploy bp-composer-trigger \
+  --source ./deployment/trigger-service \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --service-account "$COMPOSER_SA" \
+  --no-allow-unauthenticated \
+  --set-env-vars \
+    PROJECT_ID="$PROJECT_ID",\
+    REGION="$REGION",\
+    COMPOSER_ENV_NAME="$ENV_NAME",\
+    DAG_ID="biodiv_pipelines_dag_gcloud_service"
+```
+
+**Delete service**
+
+- deletes environment
+- idempotent
+- called from DAG
+
+```bash
+gcloud run deploy bp-composer-delete \
+  --source ./deployment/delete-service \
+  --service-account "$COMP_SA" \
+  --no-allow-unauthenticated \
+  --region "$REGION" \
+  --project "$PROJECT_ID" \
+  --set-env-vars \
+    PROJECT_ID="$PROJECT_ID", \
+    REGION="$REGION", \
+    COMPOSER_ENV_NAME="$ENV_NAME"
+```
+
+**NOTE:** Redeploying an existing service with the same command creates a new Cloud Run revision. Keep the existing `--set-env-vars` values unless intentionally changing service configuration.
+
+### 3. Create Boostrap Composer Environment
+
+Locate your create-service url and run it manually:
+
+```bash
+CREATE_URL=$(gcloud run services describe bp-composer-create \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --format='value(status.url)')
+
 curl -X POST "$CREATE_URL" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 ```
+Run this and wait until the environment is ready: 
 
-Wait until:
-
-```bash id="qs3"
+```bash
 gcloud composer environments describe "$ENV_NAME" \
   --location "$REGION" \
   --project "$PROJECT_ID" \
   --format="value(state)"
 ```
+This should return: `RUNNING`
 
-Expected:
+### 4. Configure Secret Manager Backend
 
-```text id="qs4"
-RUNNING
-```
+Your secrets should be stored in Secret Manager first.
 
----
-
-### 3. Load snapshot
-
-```bash id="qs5"
-curl -X POST "$LOAD_URL" \
-  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  -H "Content-Type: application/json" \
-  -d "{\"snapshot_path\":\"$SNAPSHOT_PATH\"}"
-```
-
-Wait ~35 minutes.
-
----
-
-### 4. Trigger DAG
-
-```bash id="qs6"
-curl -X POST "$TRIGGER_URL" \
-  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
-```
-
----
-
-### 5. Monitor execution
-
-* Open Airflow UI
-* Confirm DAG is running
-* Observe Dataflow jobs
-
----
-
-### 6. Verify deletion
-
-Environment should transition to:
-
-```text id="qs7"
-DELETING
-```
-
----
-
-## In detail
-
-### Environment Design
-
-#### Snapshot-based Environment
-
-The environment is restored from a **pre-built snapshot** containing:
-
-* DAGs
-* Variables
-* Connections
-* PyPI packages
-* Airflow metadata DB
-
-This ensures consistent execution across runs.
-
-* **NOTE:** Snapshot path must be the root directory
-
----
-
-### Secret Management
-
-Composer is configured to use **Secret Manager as Airflow backend**.
-
-#### Configuration
-
-This should be run when configuring the bootstrap composer environment that will serve as
-the base for the snapshot.
-
-```bash id="sd1"
+```bash
 gcloud composer environments update "$ENV_NAME" \
   --location "$REGION" \
   --project "$PROJECT_ID" \
@@ -192,199 +237,182 @@ secrets.backend=airflow.providers.google.cloud.secrets.secret_manager.CloudSecre
 secrets.backend_kwargs='{"project_id":"'"$PROJECT_ID"'","variables_prefix":"gbdp","connections_prefix":"airflow-connections","sep":"_"}'
 ```
 
-#### Naming Convention
+Grant access to the Composer service account:
 
-```text id="sd2"
-gbdp_<variable_name>
+```bash
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$COMPOSER_SA" \
+  --role="roles/secretmanager.secretAccessor"
 ```
 
-Example:
+### 5. Upload DAGs & Dependencies
 
-```text id="sd3"
-Variable.get("elasticsearch_password")
-→ gbdp_elasticsearch_password
+```bash
+gsutil cp -r ./airflow/dags/* "$COMPOSER_BUCKET/dags/"
+gsutil cp -r .airflow/biodiv_airflow/* "$COMPOSER_BUCKET/dags/biodiv_airflow/"
+
+```
+### 6. Set Airflow Variables
+
+You can use AIRFLOW UI to set variables or use the following command and repeat for each variable:
+
+```bash
+gcloud composer environments run "$ENV_NAME" \
+  --location "$REGION" \
+  variables set -- biodiv_gcp_project "$PROJECT_ID"
+
+gcloud composer environments run "$ENV_NAME" \
+  --location "$REGION" \
+  variables set -- biodiv_bucket "$BUCKET"
 ```
 
-#### IAM
+### 7. Validate the DAGs
 
-Composer service account must have:
+Run the non-delete DAG:
 
-```text id="sd4"
-roles/secretmanager.secretAccessor
+- confirm success
+- confirm Dataflow jobs run correctly
+
+### 8. Create Cloud Scheduler jobs
+
+#### Create Scheduler Service Account
+
+```bash
+gcloud iam service-accounts create bp-comp-ephemeral-scheduler
 ```
 
----
+#### Grant invoker permissions
 
-### Storage Strategy
+Repeat for all services.
 
-A persistent bucket is used:
-
-```text id="sd5"
-gs://<bucket>-composer-ephemeral
+```bash
+gcloud run services add-iam-policy-binding bp-composer-create \
+  --region "$REGION" \
+  --member="serviceAccount:bp-comp-ephemeral-scheduler@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
 ```
 
-Benefits:
+### 9. Get services URLs
 
-* stable DAG location
-* no bucket churn
-* easier debugging
+```bash
+CREATE_URL=$(gcloud run services describe bp-composer-create \
+  --region "$REGION" \
+  --format='value(status.url)')
 
-Constraint:
+LOAD_URL=$(gcloud run services describe bp-composer-load \
+  --region "$REGION" \
+  --format='value(status.url)')
 
-* only one active environment at a time
-
----
-
-### Service Design
-
-#### create-service
-
-Creates environment with:
-
-* Airflow image version
-* workloads config
-* service account
-* custom bucket
-
-#### load-service
-
-* restores snapshot
-* validates snapshot path
-* asynchronous
-
-#### trigger-service
-
-* fetches Airflow URI dynamically
-* triggers DAG via REST API
-
-#### delete-service
-
-* deletes environment
-* idempotent
-* called from DAG
-
----
-
-### DAG Design
-
-#### Execution Model
-
-```python id="sd6"
-schedule=None
-catchup=False
+TRIGGER_URL=$(gcloud run services describe bp-composer-trigger \
+  --region "$REGION" \
+  --format='value(status.url)')
+  
+DELETE_URL=$(gcloud run services describe bp-composer-delete \
+  --region "$REGION" \
+  --format='value(status.url)')
 ```
+The DELETE_URL must be added to the Airflow variables as `delete_service_url`
+in order to complete the ephimeral lifecycle setup.
 
-* no automatic runs
-* only externally triggered
+### 10. Create Snapshot
 
----
+```bash
 
-#### Flow
+export SNAPSHOT_PATH="$ALLOWED_SNAPSHOT_PREFIX/baseline-$(date +%Y%m%d-%H%M%S)"
 
-```text id="sd7"
-validate_config → gate → pipelines/skip → delete
+gcloud composer environments snapshots save "$ENV_NAME" \
+  --location "$REGION" \
+  --project "$PROJECT_ID" \
+  --snapshot-location "$SNAPSHOT_PATH"
 ```
+You can run the DAG biodiv_pipelines_dag_gcloud_service manually to confirm 
+that the delete service is working as expected. This will delete the environment.
 
----
-
-#### Configuration
-
-Loaded via:
-
-```python id="sd8"
-cfg = load_config()
-```
-
-Sources:
-
-* Airflow Variables
-* Secret Manager
-
-Important:
-
-* resolved at import time
-* requires snapshot restore
-
----
-
-#### Gate Logic
-
-* determines if pipelines should run based on a minimum threshold of new species with complete annotations.
-* prevents unnecessary Dataflow execution
-
----
-
-#### Dataflow Apache Beam Pipelines
-
-Pipelines are run using Dataflow flex-templates whose specifications can are defined
-in `dataflow_specs.py`. You can find the code base and documentation of these pipelines
-here [TODO_LINK](). 
-
-These pipelines are triggered from the DAG using the operator:
-
-```python id="sd9"
-DataflowStartFlexTemplateOperator
-```
-
----
-
-#### Delete Step
-
-```python id="sd10"
-trigger_rule="all_done"
-```
-
-* always executes
-* triggers environment deletion
-
----
-
-### IAM and Security
-
-#### Service Accounts
-
-* Composer runtime (Using compute service account by default.)
-* Scheduler invoker (Using a dedicated scheduler service account.)
-
-#### Required Role
-
-```text id="sd11"
-roles/run.invoker
-```
-
-Scheduler uses OIDC authentication.
-
----
-
-### Scheduler Configuration
+### 11. Create Scheduler Jobs
 
 The ephemeral composer environment will run the first day of every month with fixed-delay
 orchestration for each service.
 
-```text id="sd12"
+```text
 create  → 0 6 1 * *
 load    → 35 6 1 * *
 trigger → 15 7 1 * *
 ```
 
----
+**Create job**
+
+```bash
+gcloud scheduler jobs create http bp-composer-create-job \
+  --schedule="0 6 1 * *" \
+  --uri="$CREATE_URL" \
+  --http-method=POST \
+  --oidc-service-account-email="bp-comp-ephemeral-scheduler@$PROJECT_ID.iam.gserviceaccount.com" \
+  --oidc-token-audience="$CREATE_URL"
+```
+
+**Load job**
+
+```bash
+gcloud scheduler jobs create http bp-composer-load-job \
+  --schedule="35 6 1 * *" \
+  --uri="$LOAD_URL" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body="{\"snapshot_path\":\"$COMPOSER_BUCKET/composer-snapshots/baseline\"}" \
+  --oidc-service-account-email="bp-comp-ephemeral-scheduler@$PROJECT_ID.iam.gserviceaccount.com" \
+  --oidc-token-audience="$LOAD_URL"
+```
+
+**Trigger job**
+
+```bash
+gcloud scheduler jobs create http bp-composer-trigger-job \
+  --schedule="15 7 1 * *" \
+  --uri="$TRIGGER_URL" \
+  --http-method=POST \
+  --oidc-service-account-email="bp-comp-ephemeral-scheduler@$PROJECT_ID.iam.gserviceaccount.com" \
+  --oidc-token-audience="$TRIGGER_URL"
+```
+
+#### Test end-to-end lifecycle
+
+```bash
+gcloud scheduler jobs run bp-composer-create-job --location "$REGION"
+gcloud scheduler jobs run bp-composer-load-job --location "$REGION"
+gcloud scheduler jobs run bp-composer-trigger-job --location "$REGION"
+```
+
+#### Updating Snapshot
+
+You must update the snapshot path in the load service when adding new DAGs or
+updating DAGs. Use the complete snapshot root path.
+
+Example: 
+`gs://$ALLOWED_SNAPSHOT_PREFIX/baseline-20260409-185402/<project-id>_<region>_bp-composer-ephemeral_2026-04-09T17-59-17`
+
+```bash
+gcloud scheduler jobs update http bp-composer-load-job \
+  --location "$REGION" \
+  --project "$PROJECT_ID" \
+  --message-body "{\"snapshot_path\":\"gs://new-snapshot\"}"
+```
 
 ### Operational Considerations
 
-#### Timing
+#### Timing: Fixed-delay model
 
-* no readiness checks
-* relies on time buffers
+- no readiness checks
+- relies on time buffers
 
 #### Snapshot integrity
 
-* ensure no temporary values
-* snapshot is production-ready
+* ensure no test variables remain
+- ensure DAG is stable
 
 #### Deletion
 
-* asynchronous
-* logs may disappear
+- asynchronous
+- environment disappears quickly
 
 #### Idempotency
 
