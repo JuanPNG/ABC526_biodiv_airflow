@@ -14,7 +14,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
     """
     query = f"""
         CREATE OR REPLACE TABLE `{cfg.gcp_project}.{cfg.bq_dataset}.bp_integ_genome_biodiv_annotations` AS
-        
+
         WITH genome_annotations_count AS (
           SELECT g.*
           FROM `{cfg.gcp_project}.{cfg.bq_dataset}.bp_genome_biotype_summary` AS g
@@ -28,7 +28,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
         /*
         Generating a struct with gene biotypes as columns
         */
-        
+
         matrix_gene_biotype AS (
           WITH unpacked_biotypes AS (
             SELECT
@@ -59,7 +59,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
             )
           )
         ),
-        
+
         gene_matrix_struct AS (
           SELECT
             accession,
@@ -81,7 +81,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
           FROM matrix_gene_biotype
         ),
         -- --------
-        
+
         transformed_taxonomy AS (
           SELECT
             accession,
@@ -100,7 +100,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
           FROM
             `{cfg.gcp_project}.{cfg.bq_dataset}.bp_taxonomy_validated` AS tax
         ),
-        
+
         transformed_gbif AS (
           SELECT
             accession,
@@ -125,7 +125,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
           FROM `{cfg.gcp_project}.{cfg.bq_dataset}.bp_gbif_occurrences` AS gb
           GROUP BY accession
         ),
-        
+
         spatial_annotations AS (
           SELECT
             * EXCEPT(species, tax_id)
@@ -152,7 +152,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
         /*
         Adding URLs for GTF files, Ensembl & GBIF
         */
-        
+
         metadata_struct AS (
          SELECT
             accession,
@@ -164,7 +164,7 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
             ) AS meta_urls
           FROM `{cfg.gcp_project}.{cfg.bq_dataset}.bp_provenance_metadata` AS bp
         )
-        
+
         -- ------
         SELECT
            gc.*,
@@ -195,135 +195,158 @@ def build_bq_warehouse_integration_sql(cfg: BiodivConfig) -> str:
     return query
 
 
-def build_bq_genome_annotations_summary_sql(cfg: BiodivConfig) -> str:
+def build_bq_genome_annotations_summary_sql(
+        cfg: BiodivConfig,
+        run_accessions: list[str],
+) -> str:
     """
-    Return SQL to build bp_genome_biotype_summary.
+    Return SQL to append bp_genome_biotype_summary rows for run accessions.
+
     Aggregates gene and transcript biotype counts and percentages by accession.
+    Assumes run_accessions contains only new accessions, so INSERT is enough.
+    DELETE was added for retry-safe execution.
     """
-    
+    accessions_to_run = ", ".join(f"'{accession}'" for accession in run_accessions)
+
     query = f"""
-    CREATE OR REPLACE TABLE `{cfg.gcp_project}.{cfg.bq_dataset}.bp_genome_biotype_summary` AS
+        DELETE FROM `{cfg.gcp_project}.{cfg.bq_dataset}.bp_genome_biotype_summary`
+        WHERE accession IN ({accessions_to_run});
 
-    WITH accessions AS (
-      SELECT DISTINCT accession
-      FROM `{cfg.gcp_project}.{cfg.bq_dataset}.annotations`
-    ),
-    
-    reduced_gene_biotypes AS (
-      SELECT DISTINCT accession,
-        gene_id,
-        gene_biotype
-      FROM `{cfg.gcp_project}.{cfg.bq_dataset}.annotations`
-    ),
-    
-    count_gene_biotypes AS (
-      SELECT
-        accession,
-        gene_biotype,
-        COUNT(*) AS gene_biotype_count
-      FROM reduced_gene_biotypes
-      GROUP BY accession, gene_biotype
-    ),
-    
-    total_gene_count AS (
-      SELECT
-        accession,
-        SUM(gene_biotype_count) AS total_gene_biotypes
-      FROM count_gene_biotypes
-      GROUP BY accession
-    ),
-    
-    gene_proportions AS (
-      SELECT
-        g.accession,
-        g.gene_biotype,
-        g.gene_biotype_count,
-        t.total_gene_biotypes,
-        ROUND((gene_biotype_count / total_gene_biotypes) * 100, 3) AS gene_biotype_percentage
-      FROM count_gene_biotypes AS g
-      LEFT JOIN total_gene_count AS t
-      USING(accession)
-    ),
-    
-    gene_biotype_struct AS (
-      SELECT
-        accession,
-        ARRAY_AGG(
-          STRUCT(
+        INSERT INTO `{cfg.gcp_project}.{cfg.bq_dataset}.bp_genome_biotype_summary` (
+          accession,
+          gene_biotypes,
+          transcript_biotypes
+        )
+
+        WITH per_run_annotations AS (
+          SELECT
+            accession,
+            gene_id,
             gene_biotype,
-            gene_biotype_count,
-            total_gene_biotypes,
-            gene_biotype_percentage
-          )
-          ORDER BY gene_biotype
-       ) AS gene_biotypes
-      FROM gene_proportions
-      GROUP BY accession
-    ),
-    
-    reduced_transcript_biotypes AS (
-      SELECT
-        DISTINCT accession,
-        transcript_id,
-        transcript_biotype
-      FROM `{cfg.gcp_project}.{cfg.bq_dataset}.annotations`
-    ),
-    
-    count_transcript_biotypes AS (
-      SELECT
-        accession,
-        transcript_biotype,
-        COUNT(*) AS transcript_biotype_count
-      FROM reduced_transcript_biotypes
-      GROUP BY accession, transcript_biotype
-    ),
-    
-    total_trans_count AS (
-      SELECT
-        accession,
-        SUM(transcript_biotype_count) AS total_trans_biotypes
-      FROM count_transcript_biotypes
-      GROUP BY accession
-    ),
-    
-    trans_proportions AS (
-      SELECT
-        t.accession,
-        t.transcript_biotype,
-        t.transcript_biotype_count,
-        tc.total_trans_biotypes,
-        ROUND((transcript_biotype_count / total_trans_biotypes) * 100, 3) AS trans_biotype_percentage
-      FROM count_transcript_biotypes AS t
-      LEFT JOIN total_trans_count AS tc
-      USING(accession)
-    ),
-    
-    transcript_biotype_struct AS (
-      SELECT
-        accession,
-        ARRAY_AGG(
-          STRUCT(
-            transcript_biotype,
-            transcript_biotype_count,
-            total_trans_biotypes,
-            trans_biotype_percentage
-          )
-          ORDER BY transcript_biotype
-      ) AS transcript_biotypes
-      FROM trans_proportions
-      GROUP BY accession
-    )
-    
-    SELECT
-      a.accession,
-      gbs.gene_biotypes,
-      tbs.transcript_biotypes
-    FROM accessions AS a
-    LEFT JOIN gene_biotype_struct AS gbs
-      ON a.accession = gbs.accession
-    LEFT JOIN transcript_biotype_struct AS tbs
-      ON a.accession = tbs.accession
+            transcript_id,
+            transcript_biotype
+          FROM `{cfg.gcp_project}.{cfg.bq_dataset}.bp_genome_annotations`
+          WHERE accession IN ({accessions_to_run})
+        ),
 
+        accessions AS (
+          SELECT DISTINCT accession
+          FROM per_run_annotations
+        ),
+
+        reduced_gene_biotypes AS (
+          SELECT DISTINCT accession,
+            gene_id,
+            gene_biotype
+          FROM per_run_annotations
+        ),
+
+        count_gene_biotypes AS (
+          SELECT
+            accession,
+            gene_biotype,
+            COUNT(*) AS gene_biotype_count
+          FROM reduced_gene_biotypes
+          GROUP BY accession, gene_biotype
+        ),
+
+        total_gene_count AS (
+          SELECT
+            accession,
+            SUM(gene_biotype_count) AS total_gene_biotypes
+          FROM count_gene_biotypes
+          GROUP BY accession
+        ),
+
+        gene_proportions AS (
+          SELECT
+            g.accession,
+            g.gene_biotype,
+            g.gene_biotype_count,
+            t.total_gene_biotypes,
+            ROUND((gene_biotype_count / total_gene_biotypes) * 100, 3) AS gene_biotype_percentage
+          FROM count_gene_biotypes AS g
+          LEFT JOIN total_gene_count AS t
+          USING(accession)
+        ),
+
+        gene_biotype_struct AS (
+          SELECT
+            accession,
+            ARRAY_AGG(
+              STRUCT(
+                gene_biotype,
+                gene_biotype_count,
+                total_gene_biotypes,
+                gene_biotype_percentage
+              )
+              ORDER BY gene_biotype
+            ) AS gene_biotypes
+          FROM gene_proportions
+          GROUP BY accession
+        ),
+
+        reduced_transcript_biotypes AS (
+          SELECT
+            DISTINCT accession,
+            transcript_id,
+            transcript_biotype
+          FROM per_run_annotations
+        ),
+
+        count_transcript_biotypes AS (
+          SELECT
+            accession,
+            transcript_biotype,
+            COUNT(*) AS transcript_biotype_count
+          FROM reduced_transcript_biotypes
+          GROUP BY accession, transcript_biotype
+        ),
+
+        total_trans_count AS (
+          SELECT
+            accession,
+            SUM(transcript_biotype_count) AS total_trans_biotypes
+          FROM count_transcript_biotypes
+          GROUP BY accession
+        ),
+
+        trans_proportions AS (
+          SELECT
+            t.accession,
+            t.transcript_biotype,
+            t.transcript_biotype_count,
+            tc.total_trans_biotypes,
+            ROUND((transcript_biotype_count / total_trans_biotypes) * 100, 3) AS trans_biotype_percentage
+          FROM count_transcript_biotypes AS t
+          LEFT JOIN total_trans_count AS tc
+          USING(accession)
+        ),
+
+        transcript_biotype_struct AS (
+          SELECT
+            accession,
+            ARRAY_AGG(
+              STRUCT(
+                transcript_biotype,
+                transcript_biotype_count,
+                total_trans_biotypes,
+                trans_biotype_percentage
+              )
+              ORDER BY transcript_biotype
+            ) AS transcript_biotypes
+          FROM trans_proportions
+          GROUP BY accession
+        )
+
+        SELECT
+          a.accession,
+          gbs.gene_biotypes,
+          tbs.transcript_biotypes
+        FROM accessions AS a
+        LEFT JOIN gene_biotype_struct AS gbs
+          ON a.accession = gbs.accession
+        LEFT JOIN transcript_biotype_struct AS tbs
+          ON a.accession = tbs.accession
     """
     return query
-
